@@ -51,26 +51,40 @@ if [ -e /dev/fb0 ]; then
   log "wrote test pattern to fb0"
 fi
 
-# --- emergency access: Android-style USB gadget with adb ---
+# --- backlight on (LK normally leaves it on; this is a safety net) ---
+for b in /sys/class/leds/lcd-backlight/brightness /sys/class/leds/*/brightness; do
+  [ -w "$b" ] && echo 200 >"$b" 2>/dev/null && break
+done
+
+# --- emergency access: adbd over android_usb + functionfs (as in recovery's init.rc) ---
 G=/sys/class/android_usb/android0
 if [ -d $G ]; then
+  mkdir -p /system/bin /dev/usb-ffs/adb
+  ln -sf /bin/busybox /system/bin/sh
+  echo adb >$G/f_ffs/aliases
+  mount -t functionfs adb /dev/usb-ffs/adb 2>/dev/null || log "functionfs mount failed"
   echo 0 >$G/enable
   echo 18d1 >$G/idVendor; echo d001 >$G/idProduct
   echo adb >$G/functions
-  echo Rembley >$G/iManufacturer; echo "A73" >$G/iProduct
-  echo 1 >$G/enable
+  echo Rembley >$G/iManufacturer; echo A73 >$G/iProduct; echo rembley-a73 >$G/iSerial
+  echo 1 >/sys/devices/platform/mt_usb/cmode 2>/dev/null
   if [ -x /sbin/adbd ]; then
-    export ADB_TRACE=; (/sbin/adbd &) ; log "adbd started"
+    /sbin/adbd --device_banner=rembley >/tmp/adbd.log 2>&1 &
+    sleep 1
+    echo 1 >$G/enable
+    log "adbd started"
   else log "no /sbin/adbd in initramfs"; fi
 else
   log "no android_usb gadget in sysfs (see /tmp/hwreport.txt)"
 fi
 
 # --- find rootfs: partition labelled REMBLEY, or rembley-rootfs.img on any fs ---
+# ext4 volume label lives at superblock offset 1024+120 (no blkid applet in this busybox)
+label_of() { dd if="$1" bs=1 skip=1144 count=16 2>/dev/null | tr -d '\000'; }
 try_mount_root() {
   dev=$1
   mount -o ro "$dev" /mnt 2>/dev/null || return 1
-  if [ "$(blkid -s LABEL -o value "$dev" 2>/dev/null)" = REMBLEY ] && [ -x /mnt/sbin/init ]; then
+  if [ "$(label_of "$dev")" = REMBLEY ] && [ -x /mnt/sbin/init ]; then
     mount -o remount,rw /mnt; mount --move /mnt /newroot; return 0
   fi
   if [ -f /mnt/rembley-rootfs.img ]; then
