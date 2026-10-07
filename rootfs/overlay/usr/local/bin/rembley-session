@@ -1,0 +1,28 @@
+#!/bin/sh
+# Starts Xorg on the stock framebuffer (/dev/graphics/fb0) and the XFCE session.
+export HOME=/root XDG_RUNTIME_DIR=/run/user/0 DISPLAY=:0 LANG=C.UTF-8
+mkdir -p $XDG_RUNTIME_DIR; chmod 700 $XDG_RUNTIME_DIR
+LOG=/var/log/rembley-x.log
+# No udevd here, so Xorg cannot auto-detect input: build the config from /sys/class/input.
+CONF=/etc/X11/xorg.conf.d/30-rembley-input.conf
+{
+  echo 'Section "ServerFlags"'; echo '  Option "AutoAddDevices" "false"'; echo '  Option "AutoEnableDevices" "false"'; echo 'EndSection'
+  n=0
+  for d in /sys/class/input/event*; do
+    [ -e "$d/device/name" ] || continue
+    name=$(cat "$d/device/name"); dev=/dev/input/$(basename "$d"); n=$((n+1))
+    case "$name" in
+      mtk-tpd|*[Tt]ouch*) kind=touch ;;
+      *[Kk]eyboard*|*[Mm]ouse*|*HID*|*[Pp]ointer*) kind=hid ;;
+      *) continue ;;
+    esac
+    echo "Section \"InputDevice\""; echo "  Identifier \"in$n\""; echo "  Driver \"libinput\""
+    echo "  Option \"Device\" \"$dev\""; echo "EndSection"
+    echo "# $name ($kind)"; layout="$layout
+  InputDevice \"in$n\" \"SendCoreEvents\""
+  done
+  echo 'Section "ServerLayout"'; echo '  Identifier "L0"'; echo '  Screen "S0"'; printf '%s\n' "$layout"; echo 'EndSection'
+} > $CONF
+# Kernel has no VT: tell Xorg not to touch virtual terminals.
+exec xinit /usr/local/bin/rembley-xinitrc -- /usr/bin/Xorg :0 \
+     -nolisten tcp -noreset -novtswitch -sharevts -keeptty -logfile $LOG

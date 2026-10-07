@@ -1,0 +1,45 @@
+#!/bin/sh
+# Rembley OS stage-2 init (PID 1). No systemd: kernel 3.18 has no devtmpfs/cgroups/namespaces.
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+BB=/bin/busybox
+say() { echo "[rembley] $*" >/dev/console 2>/dev/null; echo "[rembley] $*"; }
+
+grep -q ' /proc ' /proc/mounts 2>/dev/null || mount -t proc proc /proc
+grep -q ' /sys '  /proc/mounts || mount -t sysfs sysfs /sys
+mount -o remount,rw / 2>/dev/null
+mount -t tmpfs -o mode=1777 tmpfs /tmp
+mount -t tmpfs -o mode=0755 tmpfs /run
+mkdir -p /dev/pts /dev/shm /run/dbus /run/sshd /tmp/.X11-unix
+mount -t devpts devpts /dev/pts 2>/dev/null
+mount -t tmpfs tmpfs /dev/shm
+chmod 1777 /tmp/.X11-unix
+
+echo /sbin/mdev >/proc/sys/kernel/hotplug 2>/dev/null
+$BB mdev -s                                   # populate /dev (no devtmpfs)
+mkdir -p /dev/graphics /dev/input
+[ -e /dev/fb0 ] && ln -sf ../fb0 /dev/graphics/fb0
+[ -e /dev/ptmx ] || mknod -m 666 /dev/ptmx c 5 2
+[ -e /dev/tty0 ] || mknod -m 620 /dev/tty0 c 4 0
+[ -e /dev/tty1 ] || mknod -m 620 /dev/tty1 c 4 1
+ln -sf /proc/self/fd /dev/fd; ln -sf /proc/self/fd/0 /dev/stdin
+ln -sf /proc/self/fd/1 /dev/stdout; ln -sf /proc/self/fd/2 /dev/stderr
+hostname "$(cat /etc/hostname 2>/dev/null || echo rembley)"
+ip link set lo up 2>/dev/null
+for t in /etc/rembley/rc.d/*.sh; do [ -x "$t" ] && "$t" 2>&1 | while read l; do say "$l"; done; done
+
+[ -e /run/dbus/pid ] && rm -f /run/dbus/pid
+mkdir -p /var/lib/dbus; dbus-uuidgen --ensure 2>/dev/null
+dbus-daemon --system --fork 2>/dev/null
+
+say "Rembley OS up. Starting graphical session (touch: $(grep -l mtk-tpd /sys/class/input/event*/device/name 2>/dev/null | head -1))"
+# Supervisor: respawn the session; if X dies repeatedly fall back to a console shell.
+fails=0
+while true; do
+  /usr/local/bin/rembley-session; rc=$?
+  fails=$((fails+1)); say "session exited ($rc), failure $fails"
+  if [ $fails -ge 3 ]; then
+    say "falling back to console shell (see /var/log/rembley-x.log)"
+    setsid sh -c 'exec sh </dev/console >/dev/console 2>&1'; fails=0
+  fi
+  sleep 2
+done

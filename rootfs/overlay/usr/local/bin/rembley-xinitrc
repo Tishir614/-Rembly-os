@@ -1,0 +1,6 @@
+#!/bin/sh
+xset s off -dpms 2>/dev/null
+# touchscreen: map taps to left clicks, 213 dpi
+xrandr --dpi 213 2>/dev/null
+command -v onboard >/dev/null && onboard --size=800x300 -e 2>/dev/null &
+exec dbus-launch --exit-with-session startxfce4

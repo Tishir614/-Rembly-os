@@ -1,33 +1,59 @@
 #!/usr/bin/env bash
-# Stage 2: Alpine armv7 rootfs image (label REMBLEY). Run as root on an x86 PC with qemu-user-static.
-# Usage: sudo rootfs/build-rootfs.sh [size_MiB]   -> out/rembley-rootfs.img
+# Stage 2: Rembley OS rootfs (Ubuntu 20.04 "focal" armhf, no systemd as PID 1) -> ext4 image labelled REMBLEY.
+# Run as root on an x86-64 Ubuntu/Debian PC:  sudo rootfs/build-rootfs.sh [size_MiB] [minimal|desktop]
+# Needs: debootstrap qemu-user-static e2fsprogs (binfmt_misc enabled).
 set -euo pipefail
-SIZE=${1:-3072}; ALPINE=${ALPINE_BRANCH:-v3.20}; REL=${ALPINE_REL:-3.20.3}
-HERE=$(cd "$(dirname "$0")/.." && pwd); OUT=$HERE/out; M=$OUT/mnt
-mkdir -p "$OUT" "$M"
-TAR=$OUT/alpine-minirootfs-$REL-armv7.tar.gz
-[ -f "$TAR" ] || curl -fsSL -o "$TAR" "https://dl-cdn.alpinelinux.org/alpine/$ALPINE/releases/armv7/alpine-minirootfs-$REL-armv7.tar.gz"
-truncate -s "${SIZE}M" "$OUT/rembley-rootfs.img"
-mkfs.ext4 -F -L REMBLEY "$OUT/rembley-rootfs.img"
-mount -o loop "$OUT/rembley-rootfs.img" "$M"; trap 'umount "$M/dev" "$M/proc" "$M/sys" 2>/dev/null; umount "$M"' EXIT
-tar -xzf "$TAR" -C "$M"
-cp "$(command -v qemu-arm-static)" "$M/usr/bin/"
-mount --bind /dev "$M/dev"; mount -t proc proc "$M/proc"; mount -t sysfs sys "$M/sys"
-cp /etc/resolv.conf "$M/etc/resolv.conf"
-cp -a "$HERE/rootfs/overlay/." "$M/"
-chroot "$M" /bin/sh -e <<'CH'
-echo "https://dl-cdn.alpinelinux.org/alpine/v3.20/main
-https://dl-cdn.alpinelinux.org/alpine/v3.20/community" > /etc/apk/repositories
-apk update
-# base + dev tools
-apk add alpine-base openrc openssh git python3 gcc g++ make cmake musl-dev nano htop
-# graphics: Xorg on plain fbdev, touch via libinput, XFCE, on-screen keyboard
-apk add xorg-server xf86-video-fbdev xf86-input-libinput xf86-input-evdev xinit \
-        xfce4 xfce4-terminal thunar onboard-or-fallback 2>/dev/null || \
-apk add xorg-server xf86-video-fbdev xf86-input-libinput xinit xfce4 xfce4-terminal thunar
-apk add bluez firefox-esr 2>/dev/null || true
-echo rembley > /etc/hostname
-echo 'root:rembley' | chpasswd
-rc-update add devfs sysinit; rc-update add sshd default; rc-update add bluetooth default 2>/dev/null || true
-CH
-echo "done: $OUT/rembley-rootfs.img  (copy to SD/USB as a partition labelled REMBLEY, or as /rembley-rootfs.img on any fs)"
+SIZE=${1:-3072}; PROFILE=${2:-desktop}
+HERE=$(cd "$(dirname "$0")/.." && pwd); OUT=$HERE/out; R=${ROOTFS_DIR:-/var/rembley/rootfs}
+MIRROR=${MIRROR:-https://ports.ubuntu.com/ubuntu-ports}
+mkdir -p "$OUT" "$(dirname "$R")"
+
+if [ ! -f "$R/etc/os-release" ]; then
+  [ -e /proc/sys/fs/binfmt_misc/qemu-arm ] || { mountpoint -q /proc/sys/fs/binfmt_misc || mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc
+    head -1 /usr/lib/binfmt.d/qemu-arm.conf > /proc/sys/fs/binfmt_misc/register; }
+  debootstrap --arch=armhf --variant=minbase --components=main,universe \
+    --include=ca-certificates,iproute2,openssh-server,nano,less,kmod,udev,sudo,busybox-static,dbus,locales \
+    focal "$R" "$MIRROR" /usr/share/debootstrap/scripts/gutsy
+fi
+
+cleanup() { for m in dev/pts dev proc sys; do umount "$R/$m" 2>/dev/null || true; done; }
+trap cleanup EXIT
+mount --bind /dev "$R/dev"; mount -t devpts devpts "$R/dev/pts" 2>/dev/null || true
+mount -t proc proc "$R/proc"; mount -t sysfs sys "$R/sys"
+cp /etc/resolv.conf "$R/etc/resolv.conf"
+cat > "$R/etc/apt/sources.list" <<L
+deb $MIRROR focal main universe
+deb $MIRROR focal-updates main universe
+deb $MIRROR focal-security main universe
+L
+# keep maintainer scripts from trying to start services in the chroot
+printf '#!/bin/sh\nexit 101\n' > "$R/usr/sbin/policy-rc.d"; chmod +x "$R/usr/sbin/policy-rc.d"
+
+PKGS_MIN="git python3 python3-pip build-essential cmake make wget curl htop bluez usbutils pciutils net-tools wpasupplicant"
+PKGS_DESK="xserver-xorg-core xserver-xorg-video-fbdev xserver-xorg-input-libinput xinit x11-xserver-utils \
+ xfce4-session xfwm4 xfdesktop4 xfce4-panel xfce4-settings xfce4-terminal thunar thunar-volman \
+ dbus-x11 onboard fonts-dejavu-core adwaita-icon-theme gtk2-engines-pixbuf netsurf-gtk mousepad"
+chroot "$R" /usr/bin/env DEBIAN_FRONTEND=noninteractive sh -ec "
+  apt-get update
+  apt-get install -y --no-install-recommends $PKGS_MIN $( [ "$PROFILE" = desktop ] && echo "$PKGS_DESK" )
+  locale-gen C.UTF-8 >/dev/null 2>&1 || true
+  echo root:rembley | chpasswd
+  ssh-keygen -A
+  apt-get clean; rm -rf /var/lib/apt/lists/*"
+rm -f "$R/usr/sbin/policy-rc.d"
+
+# overlay LAST so our /sbin/init replaces systemd's
+rm -f "$R/usr/sbin/init" "$R/sbin/init"   # was a symlink to systemd; never write through it
+cp -a --remove-destination "$HERE/rootfs/overlay/." "$R/"
+rm -f "$R/etc/X11/xorg.conf.d/20-touch.conf"   # superseded by generated 30-rembley-input.conf
+mkdir -p "$R/system/bin" "$R/var/log" "$R/run/user"
+ln -sf /bin/sh "$R/system/bin/sh"        # adbd (started by stage 1) expects /system/bin/sh
+chmod +x "$R/usr/sbin/init"; [ -e "$R/sbin/init" ] || ln -s /usr/sbin/init "$R/sbin/init"
+cleanup; trap - EXIT
+
+echo "== packing ext4 image (${SIZE} MiB, label REMBLEY)"
+IMG=$OUT/rembley-rootfs.img
+rm -f "$IMG"; truncate -s "${SIZE}M" "$IMG"
+mke2fs -q -t ext4 -L REMBLEY -d "$R" -F "$IMG"
+du -sh "$R"; ls -lh "$IMG"; sha256sum "$IMG" | tee "$IMG.sha256"
+echo "Copy to SD/USB as a REMBLEY-labelled ext4 partition, or put on any fs as /rembley-rootfs.img"

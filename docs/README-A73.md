@@ -1,19 +1,27 @@
 # Rembley OS for A73 (K37MV1_BSP, MT6737M)
 
-Stock kernel 3.18.79 + appended DTB are kept untouched. Stage 1 = BusyBox initramfs in boot image
-(`fastboot boot` only). Stage 2 = Alpine armv7 rootfs image found by label `REMBLEY`, or as
-`/rembley-rootfs.img` on any mountable fs (SD, USB, f2fs userdata).
+Stock kernel 3.18.79 + appended DTB are untouched. Nothing here flashes the device.
 
-1. `python3 build/build.py boot.bin recovery.bin` (pure python, no mkbootimg/cpio needed) -> `out/A73-linux-test.img`
-2. Test first that stock works: `fastboot boot boot.bin` (charge the battery first).
-3. `fastboot boot out/A73-linux-test.img`. Expect noise on the panel, then adb / emergency shell.
-   Run `hw` / `touchtest` and send back the report.
-4. `sudo rootfs/build-rootfs.sh` -> `out/rembley-rootfs.img`.
+| Stage | What | Built by |
+|---|---|---|
+| 1 | BusyBox initramfs in the boot image: builds `/dev` (no devtmpfs), framebuffer test, adb (functionfs), finds rootfs, `switch_root` | `python3 build/build.py boot.bin recovery.bin` -> `out/A73-linux-test.img` |
+| 2 | Ubuntu 20.04 armhf rootfs, own PID 1 (no systemd: no cgroups/devtmpfs on 3.18), Xorg fbdev + XFCE, onboard keyboard, Python/GCC/CMake/Git, NetSurf | `sudo rootfs/build-rootfs.sh` -> `out/rembley-rootfs.img` (3 GiB ext4, label `REMBLEY`) |
 
-Never use `fastboot flash/erase` with these images. Power off -> normal boot returns Android.
+## Run
+1. Charge the tablet. Sanity check: `fastboot boot boot.bin` (stock must start Android).
+2. Put `rembley-rootfs.img` on a USB stick / microSD, either as a partition labelled `REMBLEY` or as a file
+   `/rembley-rootfs.img` on a FAT32/ext4/f2fs volume (3 GiB fits FAT32). Use OTG for USB.
+3. `fastboot boot out/A73-linux-test.img`  (temporary, power-off returns to Android).
+4. Stage 1 prints noise on the panel, exposes `adb shell`; `hw` and `touchtest` give diagnostics. With the rootfs
+   present it switches to stage 2, which starts Xorg on `/dev/graphics/fb0` and XFCE. root password: `rembley`.
 
-## Unverified assumptions (check on real hardware)
-- adbd via android_usb + functionfs (copied from recovery init.rc); mt_usb cmode may need tuning.
-- `mdev -s` yields `/dev/fb0`, `/dev/input/event2`, `/dev/mmcblk0p*` on this kernel.
-- Xorg fbdev may need the right `bits_per_pixel`; read `fb0.*` in the `hw` report.
-- Wi-Fi/BT (MTK consys) are not handled in this stage.
+## Kernel facts (from kernel_config.txt)
+No DEVTMPFS/VT/namespaces/configfs-gadget, no USB ethernet/RNDIS drivers, `USB_G_ANDROID` only (adb through
+functionfs), HID + USB storage + vfat/ext4/f2fs present, Wi-Fi/BT are the MTK CONSYS combo chip (needs vendor
+firmware + userspace launcher, not done), GPU is Mali Midgard (userspace blobs from Android vendor, not used: fbdev).
+So there is no network in this version; use USB keyboard/mouse via OTG.
+
+## NOT verified on hardware
+Everything in the initramfs/rootfs boot path has only been checked offline (image structure, sizes, armhf
+binaries under qemu-user, script syntax, input-config generator). Unknowns: mdev creating fb0/event2, adb enumeration,
+Xorg fbdev without VT (flags `-novtswitch -sharevts -keeptty`), fb colour depth, touch calibration/rotation, battery/charging.
