@@ -3,7 +3,7 @@
 # Run as root on an x86-64 Ubuntu/Debian PC:  sudo rootfs/build-rootfs.sh [size_MiB] [minimal|desktop]
 # Needs: debootstrap qemu-user-static e2fsprogs (binfmt_misc enabled).
 set -euo pipefail
-SIZE=${1:-3072}; PROFILE=${2:-desktop}
+SIZE=${1:-3584}; PROFILE=${2:-desktop}
 HERE=$(cd "$(dirname "$0")/.." && pwd); OUT=$HERE/out; R=${ROOTFS_DIR:-/var/rembley/rootfs}
 MIRROR=${MIRROR:-https://ports.ubuntu.com/ubuntu-ports}
 mkdir -p "$OUT" "$(dirname "$R")"
@@ -29,10 +29,14 @@ L
 # keep maintainer scripts from trying to start services in the chroot
 printf '#!/bin/sh\nexit 101\n' > "$R/usr/sbin/policy-rc.d"; chmod +x "$R/usr/sbin/policy-rc.d"
 
-PKGS_MIN="git python3 python3-pip build-essential cmake make wget curl htop bluez usbutils pciutils net-tools wpasupplicant"
-PKGS_DESK="xserver-xorg-core xserver-xorg-video-fbdev xserver-xorg-input-libinput xinit x11-xserver-utils \
- xfce4-session xfwm4 xfdesktop4 xfce4-panel xfce4-settings xfce4-terminal thunar thunar-volman \
- dbus-x11 onboard fonts-dejavu-core adwaita-icon-theme gtk2-engines-pixbuf netsurf-gtk mousepad"
+PKGS_MIN="git python3 python3-pip python3-venv build-essential cmake make gdb nodejs wget curl htop tmux vim-tiny rsync zip unzip \
+ openssh-client neofetch bluez usbutils net-tools wpasupplicant iw rfkill ppp wireless-tools earlyoom"
+# Light desktop: Xorg + xfwm4 (no compositor) + our own GTK shell instead of full XFCE session/panel/xfdesktop.
+PKGS_DESK="xserver-xorg-core xserver-xorg-video-fbdev xserver-xorg-input-libinput xinit x11-xserver-utils x11-utils xinput unclutter \
+ xfwm4 xfce4-settings xfce4-terminal xfce4-taskmanager xfce4-appfinder thunar mousepad dbus-x11 \
+ python3-gi python3-gi-cairo gir1.2-gtk-3.0 python3-pil wmctrl playerctl onboard \
+ fonts-noto-core fonts-dejavu-core papirus-icon-theme adwaita-icon-theme gtk2-engines-pixbuf \
+ netsurf-gtk geany galculator mpv gpicview atril audacious file-roller"
 chroot "$R" /usr/bin/env DEBIAN_FRONTEND=noninteractive sh -ec "
   apt-get update
   apt-get install -y --no-install-recommends $PKGS_MIN $( [ "$PROFILE" = desktop ] && echo "$PKGS_DESK" )
@@ -45,8 +49,12 @@ rm -f "$R/usr/sbin/policy-rc.d"
 # overlay LAST so our /sbin/init replaces systemd's
 rm -f "$R/usr/sbin/init" "$R/sbin/init"   # was a symlink to systemd; never write through it
 cp -a --remove-destination "$HERE/rootfs/overlay/." "$R/"
-rm -f "$R/etc/X11/xorg.conf.d/20-touch.conf"   # superseded by generated 30-rembley-input.conf
-mkdir -p "$R/system/bin" "$R/var/log" "$R/run/user"
+rm -f "$R/etc/X11/xorg.conf.d/20-touch.conf" "$R/etc/X11/xorg.conf.d/10-fbdev.conf"   # superseded by files generated at session start
+mkdir -p "$R/system/bin" "$R/var/log" "$R/run/user" "$R/root/Projects"
+ln -sf /bin/busybox "$R/sbin/mdev"
+if [ -f "$OUT/android-blobs.tar.gz" ]; then      # Wi-Fi/BT/modem blobs from the user's own firmware (tools/extract_android_blobs.py)
+  echo "== adding android blobs"; tar -xzf "$OUT/android-blobs.tar.gz" -C "$R"
+else echo "NOTE: out/android-blobs.tar.gz not found -> no Wi-Fi/BT/SIM (see docs/NETWORK.md)"; fi
 ln -sf /bin/sh "$R/system/bin/sh"        # adbd (started by stage 1) expects /system/bin/sh
 chmod +x "$R/usr/sbin/init"; [ -e "$R/sbin/init" ] || ln -s /usr/sbin/init "$R/sbin/init"
 cleanup; trap - EXIT

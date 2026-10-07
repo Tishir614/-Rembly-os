@@ -1,0 +1,10 @@
+/* Rembley accent colours for every GTK3 app */
+@define-color theme_selected_bg_color #9b6dff;
+@define-color theme_selected_fg_color #ffffff;
+@define-color theme_bg_color #1c1530;
+@define-color theme_base_color #231a3d;
+@define-color borders #3b2d63;
+button, entry, scrollbar slider { border-radius: 10px; }
+button { min-height: 36px; min-width: 36px; }
+scrollbar slider { min-width: 12px; min-height: 12px; }
+menuitem, row, treeview.view { min-height: 38px; }

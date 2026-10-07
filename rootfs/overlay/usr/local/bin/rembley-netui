@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""Touch UI for Wi-Fi / Bluetooth / mobile data. usage: rembley-netui [wifi|bt|modem]"""
+import subprocess, sys, threading
+import gi
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk, GLib
+
+def run(*a, t=60):
+    try: return subprocess.run(['rembley-net', *a], capture_output=True, text=True, timeout=t)
+    except Exception as e:
+        class R: stdout = ''; stderr = str(e); returncode = 1
+        return R()
+
+class W(Gtk.Window):
+    def __init__(self, page):
+        super().__init__(title='Сеть'); self.set_default_size(560, 560); self.set_modal(False)
+        nb = Gtk.Notebook(); self.add(nb); nb.set_tab_pos(Gtk.PositionType.TOP)
+        # --- Wi-Fi
+        v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8); v.set_border_width(12)
+        self.st = Gtk.Label(label='…', xalign=0); v.pack_start(self.st, False, False, 0)
+        b = Gtk.Button(label='Искать сети'); b.connect('clicked', lambda _: self.scan()); v.pack_start(b, False, False, 0)
+        self.lb = Gtk.ListBox(); sc = Gtk.ScrolledWindow(); sc.add(self.lb); v.pack_start(sc, True, True, 0)
+        self.lb.connect('row-activated', self.pick)
+        nb.append_page(v, Gtk.Label(label='Wi-Fi'))
+        # --- Bluetooth
+        v2 = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8); v2.set_border_width(12)
+        self.bst = Gtk.Label(label='', xalign=0); v2.pack_start(self.bst, False, False, 0)
+        for t, f in (('Включить Bluetooth', lambda: self.bt('bt-up')), ('Искать устройства (10 с)', self.bt_scan)):
+            bb = Gtk.Button(label=t); bb.connect('clicked', lambda _b, f=f: threading.Thread(target=f, daemon=True).start()); v2.pack_start(bb, False, False, 0)
+        self.bl = Gtk.ListBox(); s2 = Gtk.ScrolledWindow(); s2.add(self.bl); v2.pack_start(s2, True, True, 0)
+        self.bl.connect('row-activated', self.bt_pair)
+        nb.append_page(v2, Gtk.Label(label='Bluetooth'))
+        # --- modem
+        v3 = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8); v3.set_border_width(12)
+        self.mt = Gtk.Label(label='Мобильные данные (SIM) — экспериментально.\nУкажите APN оператора.', xalign=0); v3.pack_start(self.mt, False, False, 0)
+        self.apn = Gtk.Entry(); self.apn.set_placeholder_text('APN, например internet'); v3.pack_start(self.apn, False, False, 0)
+        for t, f in (('Проверить модем', lambda: self.show_modem(run('modem-probe').stdout)), ('Подключить', self.modem_up), ('Отключить', lambda: run('modem-down'))):
+            bb = Gtk.Button(label=t); bb.connect('clicked', lambda _b, f=f: threading.Thread(target=f, daemon=True).start()); v3.pack_start(bb, False, False, 0)
+        self.mo = Gtk.Label(label='', xalign=0, yalign=0); self.mo.set_line_wrap(True); self.mo.set_selectable(True)
+        s3 = Gtk.ScrolledWindow(); s3.add(self.mo); v3.pack_start(s3, True, True, 0)
+        nb.append_page(v3, Gtk.Label(label='SIM'))
+        nb.set_current_page({'wifi': 0, 'bt': 1, 'modem': 2}.get(page, 0))
+        self.show_all(); self.refresh(); self.scan()
+
+    def ui(self, f, *a): GLib.idle_add(f, *a)
+    def refresh(self): threading.Thread(target=lambda: self.ui(self.st.set_text, run('wifi-status').stdout.strip() or 'Нет подключения'), daemon=True).start()
+
+    def scan(self):
+        self.st.set_text('Поиск сетей…')
+        def w():
+            r = run('wifi-scan', t=90); self.ui(self.fill, r.stdout, r.stderr); self.ui(self.refresh)
+        threading.Thread(target=w, daemon=True).start()
+
+    def fill(self, out, err):
+        for c in self.lb.get_children(): self.lb.remove(c)
+        rows = [l.split('|') for l in out.splitlines() if l.strip()]
+        if not rows: self.st.set_text('Сети не найдены. ' + (err.strip()[:200] or 'Проверьте docs/NETWORK.md (нужны файлы Android).'))
+        for ssid, sig, fl in rows:
+            r = Gtk.ListBoxRow(); r.ssid, r.secure = ssid, ('WPA' in fl or 'WEP' in fl)
+            h = Gtk.Box(spacing=10); h.set_border_width(10)
+            h.pack_start(Gtk.Label(label=ssid, xalign=0), True, True, 0)
+            h.pack_end(Gtk.Label(label=('🔒 ' if r.secure else '') + sig + ' dBm'), False, False, 0); r.add(h); self.lb.add(r)
+        self.lb.show_all()
+
+    def pick(self, _lb, row):
+        psk = ''
+        if row.secure:
+            d = Gtk.Dialog(title=row.ssid, transient_for=self, modal=True)
+            e = Gtk.Entry(); e.set_visibility(False); e.set_placeholder_text('Пароль'); d.get_content_area().pack_start(e, False, False, 12)
+            d.add_button('Подключить', 1); d.add_button('Отмена', 0); d.show_all()
+            subprocess.Popen(['dbus-send', '--type=method_call', '--dest=org.onboard.Onboard', '/org/onboard/Onboard/Keyboard', 'org.onboard.Onboard.Keyboard.Show'])
+            r = d.run(); psk = e.get_text(); d.destroy()
+            subprocess.Popen(['dbus-send', '--type=method_call', '--dest=org.onboard.Onboard', '/org/onboard/Onboard/Keyboard', 'org.onboard.Onboard.Keyboard.Hide'])
+            if r != 1: return
+        self.st.set_text('Подключение к %s…' % row.ssid)
+        def w():
+            r = run('wifi-connect', row.ssid, psk, t=120)
+            self.ui(self.st.set_text, ('Подключено\n' + r.stdout.strip()) if r.returncode == 0 else 'Не удалось подключиться: ' + (r.stdout + r.stderr).strip()[-200:])
+        threading.Thread(target=w, daemon=True).start()
+
+    def bt(self, a): r = run(a); self.ui(self.bst.set_text, (r.stdout + r.stderr).strip() or 'ok')
+    def bt_scan(self):
+        subprocess.run('timeout 10 bluetoothctl --timeout 10 scan on >/dev/null 2>&1', shell=True)
+        out = subprocess.run('bluetoothctl devices', shell=True, capture_output=True, text=True).stdout
+        self.ui(self.bt_fill, out)
+    def bt_fill(self, out):
+        for c in self.bl.get_children(): self.bl.remove(c)
+        for l in out.splitlines():
+            p = l.split(' ', 2)
+            if len(p) == 3:
+                r = Gtk.ListBoxRow(); r.mac = p[1]; r.add(Gtk.Label(label=p[2] + '  ' + p[1], xalign=0, margin=10)); self.bl.add(r)
+        self.bl.show_all()
+    def bt_pair(self, _lb, row):
+        self.bst.set_text('Сопряжение…')
+        def w():
+            o = subprocess.run('bluetoothctl pair %s; bluetoothctl trust %s; bluetoothctl connect %s' % ((row.mac,) * 3), shell=True, capture_output=True, text=True, timeout=60)
+            self.ui(self.bst.set_text, o.stdout.strip()[-200:])
+        threading.Thread(target=w, daemon=True).start()
+    def show_modem(self, s): self.ui(self.mo.set_text, s or '(пусто)')
+    def modem_up(self):
+        a = self.apn.get_text().strip()
+        if a: open('/etc/rembley/modem.conf', 'w').write('APN=%s\n' % a)
+        r = run('modem-up', t=120); self.ui(self.mo.set_text, (r.stdout + r.stderr).strip() or 'ok')
+
+W(sys.argv[1] if len(sys.argv) > 1 else 'wifi').connect('destroy', Gtk.main_quit); Gtk.main()

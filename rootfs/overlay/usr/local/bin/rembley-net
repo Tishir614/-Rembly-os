@@ -1,0 +1,101 @@
+#!/bin/sh
+# Rembley networking for the A73 (MediaTek CONSYS Wi-Fi/BT + optional modem).
+# Needs the Android blobs extracted from YOUR firmware (tools/extract_android_blobs.py) under /system and /vendor.
+# usage: rembley-net auto | wifi-up | wifi-scan | wifi-connect SSID [PSK] | wifi-status | wifi-down
+#        rembley-net bt-up | bt-down | modem-probe | modem-up | modem-down | status
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+CONF=/etc/wpa_supplicant/rembley.conf; IF=${WIFI_IF:-wlan0}
+[ -f /etc/rembley/net.conf ] && . /etc/rembley/net.conf
+log() { echo "[net] $*"; }
+
+fwdir() {   # directory that holds the connectivity firmware
+  for d in /vendor/firmware /system/etc/firmware /vendor/etc/firmware /etc/firmware; do
+    ls "$d"/WMT_SOC.cfg "$d"/*wmt* >/dev/null 2>&1 && { echo "$d"; return; }
+  done
+  for d in /vendor/firmware /system/etc/firmware; do [ -d "$d" ] && { echo "$d"; return; }; done
+}
+
+wmt_start() {
+  [ -x /system/bin/wmt_launcher ] || { log "no /system/bin/wmt_launcher: extract android blobs first (see docs/NETWORK.md)"; return 1; }
+  [ -e /system/bin/linker ] || log "WARNING: /system/bin/linker missing, android binaries will not start"
+  mkdir -p /dev/socket /data/misc /system/etc/firmware 2>/dev/null
+  mdev -s
+  FW=$(fwdir); log "firmware dir: $FW"
+  pidof wmt_launcher >/dev/null || {
+    [ -x /system/bin/wmt_loader ] && /system/bin/wmt_loader >/var/log/wmt_loader.log 2>&1
+    # shellcheck disable=SC2086
+    setsid /system/bin/wmt_launcher ${WMT_ARGS:--p $FW -m 1} >/var/log/wmt_launcher.log 2>&1 </dev/null &
+    sleep 3
+  }
+  pidof wmt_launcher >/dev/null || { log "wmt_launcher died, see /var/log/wmt_launcher.log"; return 1; }
+}
+
+wifi_up() {
+  [ -d /sys/class/net/$IF ] || {
+    wmt_start || return 1
+    for n in 1 2 3 4 5 6 7 8 9 10; do [ -e /dev/wmtWifi ] && break; mdev -s; sleep 1; done
+    [ -e /dev/wmtWifi ] || { log "/dev/wmtWifi missing: kernel did not register the combo chip"; return 1; }
+    echo 1 > /dev/wmtWifi
+    for n in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do [ -d /sys/class/net/$IF ] && break; sleep 1; done
+  }
+  [ -d /sys/class/net/$IF ] || { log "$IF did not appear (firmware load problem?), dmesg | grep -i wlan"; return 1; }
+  ip link set $IF up
+  rfkill unblock all 2>/dev/null
+  [ -f $CONF ] || { mkdir -p /etc/wpa_supplicant; printf 'ctrl_interface=/run/wpa_supplicant\nupdate_config=1\ncountry=%s\n' "${COUNTRY:-US}" > $CONF; }
+  pidof wpa_supplicant >/dev/null || wpa_supplicant -B -i $IF -c $CONF -Dnl80211,wext -P /run/wpa_supplicant.pid
+  log "$IF up"
+}
+
+dhcp() { pkill -f "udhcpc -i $IF" 2>/dev/null; /bin/busybox udhcpc -i $IF -s /etc/rembley/udhcpc.script -b -q -t 8 -T 3 -A 5 2>&1; }
+
+case "$1" in
+  auto)
+    [ -x /system/bin/wmt_launcher ] || { log "no android blobs -> skipping wifi/bt (docs/NETWORK.md)"; exit 0; }
+    wifi_up && { [ -s $CONF ] && grep -q 'network=' $CONF && dhcp; }
+    "$0" bt-up ;;
+  wifi-up) wifi_up ;;
+  wifi-down) pkill wpa_supplicant; ip link set $IF down; echo 0 > /dev/wmtWifi 2>/dev/null ;;
+  wifi-scan)
+    wifi_up >/dev/null 2>&1; wpa_cli -i $IF scan >/dev/null 2>&1; sleep 4
+    wpa_cli -i $IF scan_results | tail -n +2 | awk -F'\t' '$5!=""{print $5"|"$3"|"$4}' | sort -t'|' -k2 -nr | awk -F'|' '!s[$1]++' ;;
+  wifi-connect)
+    SSID=$2; PSK=$3; wifi_up || exit 1
+    N=$(wpa_cli -i $IF add_network | tail -1)
+    wpa_cli -i $IF set_network $N ssid "\"$SSID\"" >/dev/null
+    if [ -n "$PSK" ]; then wpa_cli -i $IF set_network $N psk "\"$PSK\"" >/dev/null; else wpa_cli -i $IF set_network $N key_mgmt NONE >/dev/null; fi
+    wpa_cli -i $IF enable_network $N >/dev/null; wpa_cli -i $IF select_network $N >/dev/null; wpa_cli -i $IF save_config >/dev/null
+    for i in 1 2 3 4 5 6 7 8 9 10; do wpa_cli -i $IF status | grep -q 'wpa_state=COMPLETED' && break; sleep 1; done
+    wpa_cli -i $IF status | grep -q 'wpa_state=COMPLETED' || { log "association failed (wrong password?)"; wpa_cli -i $IF remove_network $N >/dev/null; wpa_cli -i $IF save_config >/dev/null; exit 1; }
+    dhcp; ip -4 addr show $IF | grep inet ;;
+  wifi-status) wpa_cli -i $IF status 2>&1 | grep -E 'ssid=|wpa_state|ip_address'; ip -4 addr show $IF 2>/dev/null | grep inet ;;
+  bt-up)
+    [ -e /dev/stpbt ] || { mdev -s; sleep 1; }
+    [ -e /dev/stpbt ] || { log "no /dev/stpbt (start wmt first)"; exit 1; }
+    pidof btattach >/dev/null || setsid btattach -B /dev/stpbt -P ${BT_PROTO:-h4} >/var/log/btattach.log 2>&1 </dev/null &
+    sleep 2; pidof bluetoothd >/dev/null || { /usr/lib/bluetooth/bluetoothd -n >/var/log/bluetoothd.log 2>&1 </dev/null & }
+    sleep 2; [ -d /sys/class/bluetooth/hci0 ] && { hciconfig hci0 up 2>/dev/null; log "hci0 up"; } || log "hci0 did not appear (see /var/log/btattach.log)" ;;
+  bt-down) pkill btattach; pkill bluetoothd ;;
+  modem-probe)
+    echo "== candidate AT/modem ports"; ls -l /dev/ttyC* /dev/radio/* /dev/ccci* /dev/ttyUSB* /dev/ttyACM* 2>/dev/null
+    echo "== ccci/md in dmesg"; dmesg | grep -iE 'ccci|md1|modem|sim' | tail -20
+    echo "== modem firmware"; ls /vendor/firmware/md* /system/etc/firmware/md* /vendor/firmware/modem* 2>/dev/null ;;
+  modem-up)
+    [ -f /etc/rembley/modem.conf ] && . /etc/rembley/modem.conf
+    PORT=${MODEM_PORT:-$(ls /dev/ttyACM0 /dev/ttyUSB0 /dev/ttyC0 /dev/radio/pttycmd1 2>/dev/null | head -1)}
+    [ -n "$PORT" ] && [ -c "$PORT" ] || { log "no modem AT port found. Run: rembley-net modem-probe"; exit 1; }
+    : "${APN:?set APN in /etc/rembley/modem.conf}"
+    cat > /etc/ppp/rembley-chat <<C
+ABORT 'NO CARRIER'
+ABORT 'ERROR'
+TIMEOUT 30
+'' AT
+OK 'AT+CGDCONT=1,"IP","$APN"'
+OK 'ATD*99#'
+CONNECT ''
+C
+    pppd "$PORT" 115200 noauth nodetach defaultroute usepeerdns noipdefault persist maxfail 0 connect "chat -v -f /etc/ppp/rembley-chat" >/var/log/ppp.log 2>&1 &
+    sleep 15; ip -4 addr show ppp0 | grep inet || { log "ppp0 not up, see /var/log/ppp.log"; exit 1; } ;;
+  modem-down) pkill pppd ;;
+  status) "$0" wifi-status; ls /sys/class/bluetooth 2>/dev/null; ip -4 addr show ppp0 2>/dev/null | grep inet ;;
+  *) sed -n '2,6p' "$0"; exit 1 ;;
+esac

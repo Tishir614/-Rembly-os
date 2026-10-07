@@ -1,6 +1,16 @@
 #!/bin/sh
+export XDG_CURRENT_DESKTOP=XFCE GTK_OVERLAY_SCROLLING=1 GDK_SCALE=1
+printf 'Xft.dpi: 140\nXft.antialias: 1\nXft.hinting: 1\nXft.hintstyle: hintslight\nXft.rgba: none\nXcursor.size: 32\n' | xrdb -merge
 xset s off -dpms 2>/dev/null
-# touchscreen: map taps to left clicks, 213 dpi
-xrandr --dpi 213 2>/dev/null
-command -v onboard >/dev/null && onboard --size=800x300 -e 2>/dev/null &
-exec dbus-launch --exit-with-session startxfce4
+# udev-mode sanity check: if the touchscreen was not picked up, restart X in static-input mode once
+( sleep 6
+  if ! xinput list --name-only 2>/dev/null | grep -q 'mtk-tpd'; then
+    if [ ! -e /run/rembley/static-input ]; then touch /run/rembley/static-input; pkill -x Xorg; fi
+  fi ) &
+unclutter -idle 2 -root 2>/dev/null &                 # hide the mouse cursor when idle (touch use)
+xfsettingsd 2>/dev/null &                              # applies theme/fonts from xfconf
+xfwm4 --compositor=off 2>/dev/null &                   # window manager, no compositing = no lag
+onboard 2>/dev/null &
+( sleep 4; dbus-send --type=method_call --dest=org.onboard.Onboard /org/onboard/Onboard/Keyboard org.onboard.Onboard.Keyboard.Hide ) 2>/dev/null &
+sleep 1
+exec dbus-launch --exit-with-session /usr/local/bin/rembley-shell
