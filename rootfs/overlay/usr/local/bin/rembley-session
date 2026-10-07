@@ -1,9 +1,10 @@
 #!/bin/sh
 # Starts Xorg on the stock framebuffer (/dev/graphics/fb0) and the Rembley desktop.
-export HOME=/root XDG_RUNTIME_DIR=/run/user/0 DISPLAY=:0 LANG=C.UTF-8
+export HOME=/root XDG_RUNTIME_DIR=/run/user/0 DISPLAY=:0 LANG=ru_RU.UTF-8
 mkdir -p $XDG_RUNTIME_DIR /run/rembley; chmod 700 $XDG_RUNTIME_DIR
 LOG=/var/log/rembley-x.log
 [ -f /etc/rembley/display.conf ] && . /etc/rembley/display.conf
+DPI=${DPI:-140}
 ROTATE=${ROTATE:-CW}          # CW = landscape 1280x800 (panel is portrait 800x1280). none|CW|CCW|UD
 case $ROTATE in
   CW)  MATRIX="0 1 0 -1 0 1 0 0 1" ;;      CCW) MATRIX="0 -1 1 1 0 0 0 0 1" ;;
@@ -66,4 +67,4 @@ EndSection
 C
 fi
 exec xinit /usr/local/bin/rembley-xinitrc -- /usr/bin/Xorg :0 \
-     -nolisten tcp -noreset -novtswitch -sharevts -keeptty -dpi 140 -logfile $LOG
+     -nolisten tcp -noreset -novtswitch -sharevts -keeptty -dpi $DPI -logfile $LOG

@@ -26,6 +26,9 @@ Landscape 1280x800 by default (panel is portrait). `rembley-rotate cw|ccw|ud|non
 Apps: NetSurf, Thunar, terminal, Geany (IDE), Mousepad, calculator, mpv, audacious, image/PDF viewers,
 task manager; dev: Python 3.8, GCC 9, G++, CMake, Make, GDB, Git, Node.js, SSH.
 
+## Full user guide
+`docs/USER-GUIDE.md` (Russian): quick settings, power key, lock PIN, store, console commands, troubleshooting. Missing features: `docs/ROADMAP.md`.
+
 ## Why it should stay smooth (2 GB RAM, Cortex-A53, software rendering)
 No compositor and no animations; the "glass" is a blurred wallpaper copy painted once. Only xfwm4 + one
 Python/GTK process run besides Xorg. zram swap (lz4, 70 % of RAM), tuned VM sysctls, `earlyoom` so memory

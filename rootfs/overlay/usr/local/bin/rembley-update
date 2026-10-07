@@ -1,0 +1,13 @@
+#!/bin/sh
+# Update Rembley scripts/themes on the device without rebuilding the image.
+# usage: rembley-update [DIR_WITH_REPO | GIT_URL]     (default: $REMBLEY_REPO or /var/cache/rembley-src)
+# Keeps your settings (display/power/kbd config, user dotfiles, hostname).
+SRC=${1:-${REMBLEY_REPO:-}}
+if [ -d "$SRC/rootfs/overlay" ]; then DIR=$SRC
+elif [ -n "$SRC" ]; then
+  DIR=/var/cache/rembley-src; rm -rf $DIR; git clone --depth 1 "$SRC" $DIR || exit 1
+elif [ -d /var/cache/rembley-src/.git ]; then DIR=/var/cache/rembley-src; git -C $DIR pull --ff-only || exit 1
+else echo "usage: rembley-update DIR|GIT_URL  (e.g. a USB stick copy of the repo, or the GitHub URL)"; exit 1; fi
+rsync -a --exclude='/etc/hostname' --exclude='/etc/rembley/*.conf' --exclude='/etc/rembley/pin' --exclude='/root/.config/' \
+      --exclude='/etc/rembley/timezone' "$DIR/rootfs/overlay/" / && chmod +x /usr/local/bin/rembley-* /sbin/init /etc/rembley/rc.d/*.sh 2>/dev/null
+echo "Updated from $DIR. Restart the desktop: rembley-restart-shell (or reboot for init/rc.d changes)."

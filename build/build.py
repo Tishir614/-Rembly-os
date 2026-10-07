@@ -48,6 +48,8 @@ def main():
     ents += [('bin/busybox', F | 0o755, bb), ('sbin/adbd', F | 0o755, adbd),
              ('init', F | 0o755, open(os.path.join(HERE, 'initramfs/init'), 'rb').read()),
              ('etc/mdev.conf', F | 0o644, open(os.path.join(HERE, 'initramfs/etc/mdev.conf'), 'rb').read()),
+             ('splash.32.gz', F | 0o644, open(os.path.join(HERE, 'initramfs/splash.32.gz'), 'rb').read()),
+             ('splash.16.gz', F | 0o644, open(os.path.join(HERE, 'initramfs/splash.16.gz'), 'rb').read()),
              ('bin/sh', L, b'busybox'), ('system/bin/sh', L, b'../../bin/busybox')]
     cpio = T.cpio_write(ents)
     rd = gzip.compress(cpio, 9, mtime=0)

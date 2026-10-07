@@ -1,0 +1,241 @@
+#!/usr/bin/env python3
+"""Rembley Settings: profile, display, sound, network, time/language, performance, system, developer.
+usage: rembley-settings [--welcome]   (welcome = first-run setup)"""
+import glob, os, shutil, subprocess, sys, threading
+sys.path[:0] = ['/usr/local/lib/rembley', os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'lib', 'rembley')]
+import rembleyui as ui
+from rembleyui import *
+
+WELCOME = '--welcome' in sys.argv
+RE = '/etc/rembley'
+
+
+def read(p, d=''):
+    try: return open(p).read().strip()
+    except Exception: return d
+
+
+def kv_get(path, key, default=''):
+    for l in read(path).splitlines():
+        if l.startswith(key + '='): return l.split('=', 1)[1]
+    return default
+
+
+def kv_set(path, key, val):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    lines = [l for l in read(path).splitlines() if l and not l.startswith(key + '=')]
+    lines.append('%s=%s' % (key, val)); open(path, 'w').write('\n'.join(lines) + '\n')
+
+
+def row(label, widget, hint=None):
+    b = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2); b.set_margin_bottom(10)
+    h = Gtk.Box(spacing=12); l = Gtk.Label(label=label, xalign=0); l.set_size_request(230, -1); h.pack_start(l, False, False, 0)
+    h.pack_start(widget, True, True, 0); b.pack_start(h, False, False, 0)
+    if hint:
+        x = Gtk.Label(label=hint, xalign=0); x.get_style_context().add_class('small'); x.set_line_wrap(True); b.pack_start(x, False, False, 0)
+    return b
+
+
+def page(title):
+    v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4); v.set_border_width(20)
+    t = Gtk.Label(label=title, xalign=0); t.get_style_context().add_class('rl-title'); v.pack_start(t, False, False, 10); return v
+
+
+def btn(text, fn, bg=True):
+    b = Gtk.Button(label=text); b.set_size_request(-1, 46)
+    b.connect('clicked', lambda _b: threading.Thread(target=fn, daemon=True).start() if bg else fn()); return b
+
+
+def msg(parent, text):
+    d = Gtk.MessageDialog(transient_for=parent, modal=True, message_type=Gtk.MessageType.INFO, buttons=Gtk.ButtonsType.OK, text=text)
+    d.run(); d.destroy()
+
+
+def entry_dialog(parent, title, secret=False, text=''):
+    d = Gtk.Dialog(title=title, transient_for=parent, modal=True); e = Gtk.Entry(); e.set_text(text); e.set_visibility(not secret)
+    d.get_content_area().set_border_width(12); d.get_content_area().pack_start(e, False, False, 6)
+    d.add_button('OK', 1); d.add_button('Отмена', 0); d.show_all(); osk(True)
+    r = d.run(); v = e.get_text(); d.destroy(); osk(False); return v if r == 1 else None
+
+
+class Settings(Gtk.Window):
+    def __init__(self):
+        super().__init__(title='Настройки Rembley'); self.set_default_size(1100, 660); self.set_position(Gtk.WindowPosition.CENTER)
+        hb = Gtk.Box(); self.add(hb); st = Gtk.Stack(); sb = Gtk.StackSidebar(); sb.set_stack(st); sb.set_size_request(230, -1)
+        hb.pack_start(sb, False, False, 0); hb.pack_start(st, True, True, 0)
+        for name, title, fn in (('profile', 'Профиль', self.p_profile), ('display', 'Экран и питание', self.p_display), ('sound', 'Звук', self.p_sound),
+                                ('net', 'Сеть', self.p_net), ('time', 'Время и язык', self.p_time), ('perf', 'Производительность', self.p_perf),
+                                ('dev', 'Разработка', self.p_dev), ('about', 'О планшете', self.p_about)):
+            sw = Gtk.ScrolledWindow(); sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC); sw.add(fn()); st.add_titled(sw, name, title)
+        self.show_all()
+
+    # ---------- pages ----------
+    def p_profile(self):
+        v = page('Добро пожаловать в Rembley OS' if WELCOME else 'Профиль')
+        if WELCOME:
+            t = Gtk.Label(label='Первый запуск: задайте имя, город для погоды, часовой пояс (вкладка «Время и язык») и нажмите «Готово».', xalign=0)
+            t.set_line_wrap(True); v.pack_start(t, False, False, 6)
+        self.name = Gtk.Entry(); self.name.set_text(read(CFG + '/user', 'Rembley')); v.pack_start(row('Имя на экране', self.name), False, False, 0)
+        self.city = Gtk.Entry(); self.city.set_text(read(CFG + '/city')); self.city.set_placeholder_text('например Antalya (пусто = по IP)')
+        v.pack_start(row('Город для погоды', self.city, 'Погода берётся с wttr.in, нужен интернет.'), False, False, 0)
+        for e in (self.name, self.city): e.connect('focus-in-event', lambda *_: osk(True))
+        v.pack_start(btn('Сохранить и применить', self.save_profile, False), False, False, 4)
+        if WELCOME: v.pack_start(btn('Готово — начать пользоваться', self.finish, False), False, False, 4)
+        return v
+
+    def save_profile(self):
+        os.makedirs(CFG, exist_ok=True); open(CFG + '/user', 'w').write(self.name.get_text().strip() or 'Rembley')
+        open(CFG + '/city', 'w').write(self.city.get_text().strip())
+        msg(self, 'Сохранено. Рабочий стол перезапустится.'); ui.sh('rembley-restart-shell')
+
+    def finish(self):
+        os.makedirs(CFG, exist_ok=True); open(CFG + '/first-run-done', 'w').write('1'); self.save_profile_quiet(); Gtk.main_quit()
+
+    def save_profile_quiet(self):
+        open(CFG + '/user', 'w').write(self.name.get_text().strip() or 'Rembley'); open(CFG + '/city', 'w').write(self.city.get_text().strip())
+
+    def p_display(self):
+        v = page('Экран и питание')
+        bl = backlight_path(); sc = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 5, 255, 1); sc.set_draw_value(False)
+        sc.set_value(int(read(bl, '128') or 128) if bl else 128); sc.connect('value-changed', lambda w: write_sys(bl, int(w.get_value())) if bl else None)
+        v.pack_start(row('Яркость', sc, None if bl else 'Подсветка не найдена в sysfs.'), False, False, 0)
+        self.rot = Gtk.ComboBoxText(); cur = kv_get(RE + '/display.conf', 'ROTATE', 'CW')
+        for k, t in (('CW', 'Альбомная (по умолчанию)'), ('CCW', 'Альбомная, перевёрнутая'), ('none', 'Портретная'), ('UD', 'Портретная, перевёрнутая')):
+            self.rot.append(k, t)
+        self.rot.set_active_id(cur if cur in ('CW', 'CCW', 'none', 'UD') else 'CW')
+        v.pack_start(row('Ориентация', self.rot, 'Меняется ориентация экрана и сенсора сразу (экран перезапустится).'), False, False, 0)
+        v.pack_start(btn('Применить ориентацию', lambda: ui.sh('rembley-rotate ' + self.rot.get_active_id().lower()), False), False, False, 4)
+        self.dpi = Gtk.ComboBoxText()
+        for k, t in (('110', 'Мелко (110)'), ('140', 'Обычно (140)'), ('170', 'Крупно (170)'), ('200', 'Очень крупно (200)')): self.dpi.append(k, t)
+        self.dpi.set_active_id(kv_get(RE + '/display.conf', 'DPI', '140') if kv_get(RE + '/display.conf', 'DPI', '140') in ('110', '140', '170', '200') else '140')
+        v.pack_start(row('Размер интерфейса', self.dpi, 'Применится после перезапуска экрана.'), False, False, 0)
+        v.pack_start(btn('Применить размер', lambda: (kv_set(RE + '/display.conf', 'DPI', self.dpi.get_active_id()), ui.sh('pkill -x Xorg')), False), False, False, 4)
+        fc = Gtk.FileChooserButton(title='Обои', action=Gtk.FileChooserAction.OPEN); f = Gtk.FileFilter(); f.set_name('Изображения'); f.add_mime_type('image/*'); fc.add_filter(f)
+        fc.connect('file-set', lambda w: self.set_wall(w.get_filename()))
+        v.pack_start(row('Обои', fc, 'Фон «стекла» подстроится автоматически. Рекомендуется 1280×800.'), False, False, 0)
+        v.pack_start(btn('Вернуть стандартные обои', lambda: (os.path.exists(CFG + '/wallpaper.png') and os.remove(CFG + '/wallpaper.png'), ui.sh('rembley-restart-shell')), False), False, False, 12)
+        pc = RE + '/power.conf'
+        self.dim = Gtk.SpinButton.new_with_range(10, 900, 10); self.dim.set_value(int(kv_get(pc, 'DIM_S', '60')))
+        self.off = Gtk.SpinButton.new_with_range(20, 1800, 10); self.off.set_value(int(kv_get(pc, 'OFF_S', '120')))
+        v.pack_start(row('Затемнять через (сек)', self.dim), False, False, 0); v.pack_start(row('Гасить экран через (сек)', self.off), False, False, 0)
+        self.lock = Gtk.Switch(); self.lock.set_active(kv_get(pc, 'LOCK', '0') == '1'); self.lock.set_halign(Gtk.Align.START)
+        v.pack_start(row('Блокировать при выключении экрана', self.lock), False, False, 0)
+        v.pack_start(btn('Сохранить питание', lambda: (kv_set(pc, 'DIM_S', int(self.dim.get_value())), kv_set(pc, 'OFF_S', int(self.off.get_value())), kv_set(pc, 'LOCK', 1 if self.lock.get_active() else 0)), False), False, False, 4)
+        v.pack_start(btn('Задать / сменить PIN', self.set_pin, False), False, False, 4)
+        v.pack_start(btn('Удалить PIN', lambda: ui.sh('rembley-lock --set ""'), False), False, False, 4)
+        return v
+
+    def set_wall(self, path):
+        if not path: return
+        os.makedirs(CFG, exist_ok=True)
+        try:
+            from PIL import Image
+            Image.open(path).convert('RGB').save(CFG + '/wallpaper.png')
+        except Exception:
+            shutil.copy(path, CFG + '/wallpaper.png')
+        ui.sh('rembley-restart-shell')
+
+    def set_pin(self):
+        a = entry_dialog(self, 'Новый PIN (4–12 цифр)', True)
+        if a and a.isdigit() and 4 <= len(a) <= 12:
+            subprocess.run(['rembley-lock', '--set', a]); kv_set(RE + '/power.conf', 'LOCK', 1); self.lock.set_active(True); msg(self, 'PIN сохранён, блокировка включена.')
+        elif a is not None: msg(self, 'PIN должен состоять из 4–12 цифр.')
+
+    def p_sound(self):
+        v = page('Звук'); ctl = out("amixer scontrols 2>/dev/null | head -1 | sed -n \"s/.*'\\(.*\\)'.*/\\1/p\"", 2)
+        sc = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1); sc.set_draw_value(True)
+        m = out("amixer sget '%s' 2>/dev/null | grep -o '[0-9]*%%' | head -1" % ctl, 2); sc.set_value(int(m.strip('%')) if m else 70)
+        sc.connect('value-changed', lambda w: ui.sh("amixer -q sset '%s' %d%% unmute" % (ctl, int(w.get_value()))))
+        v.pack_start(row('Громкость', sc, ('Регулятор ALSA: ' + ctl) if ctl else 'Звуковая карта не найдена: в ядре MTK звук может требовать Android-библиотек.'), False, False, 0)
+        v.pack_start(btn('Проверка звука', lambda: ui.sh('speaker-test -t sine -f 440 -l 1 -c 2'), False), False, False, 4)
+        c = Gtk.Label(label=out('aplay -l 2>&1 | head -8', 3) or 'aplay: нет устройств', xalign=0); c.get_style_context().add_class('small'); v.pack_start(c, False, False, 10)
+        return v
+
+    def p_net(self):
+        v = page('Сеть')
+        self.nst = Gtk.Label(label=out('rembley-net status 2>&1', 8) or 'Нет подключения', xalign=0); self.nst.set_line_wrap(True); v.pack_start(self.nst, False, False, 8)
+        for t, c in (('Wi-Fi', 'rembley-netui'), ('Bluetooth', 'rembley-netui bt'), ('Мобильные данные (SIM)', 'rembley-netui modem')):
+            v.pack_start(btn(t, lambda c=c: ui.sh(c), False), False, False, 4)
+        h = Gtk.Label(label='Wi-Fi/Bluetooth/SIM работают только после установки файлов Android: docs/NETWORK.md', xalign=0); h.get_style_context().add_class('small'); v.pack_start(h, False, False, 10)
+        return v
+
+    def p_time(self):
+        v = page('Время и язык')
+        zones = sorted(set(l.strip() for l in out("cd /usr/share/zoneinfo && find . -type f | sed 's#^./##' | grep -E '^(Africa|America|Asia|Atlantic|Australia|Europe|Pacific|UTC)' ", 5).splitlines()))
+        self.tz = Gtk.ComboBoxText.new_with_entry()
+        for z in zones: self.tz.append_text(z)
+        self.tz.get_child().set_text(read(RE + '/timezone', 'UTC')); self.tz.get_child().connect('focus-in-event', lambda *_: osk(True))
+        v.pack_start(row('Часовой пояс', self.tz, 'Например Europe/Moscow, Europe/Istanbul, Asia/Almaty.'), False, False, 0)
+        v.pack_start(btn('Применить часовой пояс', self.apply_tz, False), False, False, 4)
+        self.ntp = Gtk.Label(label='', xalign=0); v.pack_start(btn('Синхронизировать время по сети (NTP)', lambda: self.ui_set(self.ntp, 'Результат: ' + (out('/bin/busybox ntpd -n -q -p pool.ntp.org 2>&1 | tail -1', 30) or 'нет ответа')), True), False, False, 10)
+        v.pack_start(self.ntp, False, False, 0)
+        self.kb = Gtk.ComboBoxText()
+        for k, t in (('us,ru', 'English + Русский'), ('us', 'English'), ('ru,us', 'Русский + English'), ('us,ru,tr', 'English + Русский + Türkçe')): self.kb.append(k, t)
+        self.kb.set_active_id(kv_get(RE + '/kbd.conf', 'LAYOUTS', 'us,ru') if kv_get(RE + '/kbd.conf', 'LAYOUTS', 'us,ru') in ('us,ru', 'us', 'ru,us', 'us,ru,tr') else 'us,ru')
+        v.pack_start(row('Раскладки физической клавиатуры', self.kb, 'Переключение: Alt+Shift или Win+Пробел. На экранной клавиатуре — кнопка языка.'), False, False, 14)
+        v.pack_start(btn('Применить раскладки', lambda: (kv_set(RE + '/kbd.conf', 'LAYOUTS', self.kb.get_active_id()), ui.sh('setxkbmap -layout %s -option grp:alt_shift_toggle,grp:win_space_toggle' % self.kb.get_active_id())), False), False, False, 4)
+        return v
+
+    def ui_set(self, w, t): GLib.idle_add(w.set_text, t)
+
+    def apply_tz(self):
+        z = self.tz.get_child().get_text().strip()
+        if not os.path.exists('/usr/share/zoneinfo/' + z): return msg(self, 'Такого часового пояса нет: ' + z)
+        os.makedirs(RE, exist_ok=True); open(RE + '/timezone', 'w').write(z); open('/etc/timezone', 'w').write(z + '\n')
+        subprocess.run(['ln', '-sf', '/usr/share/zoneinfo/' + z, '/etc/localtime']); msg(self, 'Часовой пояс: ' + z)
+
+    def p_perf(self):
+        v = page('Производительность')
+        info = Gtk.Label(xalign=0); info.get_style_context().add_class('small'); v.pack_start(info, False, False, 6)
+        def upd():
+            mi = {l.split(':')[0]: int(l.split()[1]) for l in open('/proc/meminfo') if ':' in l}
+            gov = read('/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor', '?'); fr = read('/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq', '0')
+            tz = read('/sys/class/thermal/thermal_zone0/temp', '0'); tz = int(tz) / (1000 if int(tz) > 1000 else 1)
+            info.set_text('ОЗУ: %d / %d МБ   swap(zram): %d МБ\nCPU: %s, %s МГц, ядер онлайн: %s\nТемпература: %.0f °C\n%s' % (
+                (mi['MemTotal'] - mi['MemAvailable']) // 1024, mi['MemTotal'] // 1024, (mi['SwapTotal'] - mi['SwapFree']) // 1024,
+                gov, int(fr) // 1000, read('/sys/devices/system/cpu/online', '?'), tz, out('swapon --show 2>/dev/null', 2))); return True
+        upd(); GLib.timeout_add_seconds(3, upd)
+        govs = read('/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors', 'interactive').split()
+        cb = Gtk.ComboBoxText()
+        for g in govs: cb.append(g, g)
+        cb.set_active_id(read('/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor', govs[0]))
+        cb.connect('changed', lambda w: [write_sys(p, w.get_active_id()) for p in glob.glob('/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor')])
+        v.pack_start(row('Режим процессора', cb, 'interactive — по умолчанию; performance — максимум скорости; powersave — экономия.'), False, False, 6)
+        v.pack_start(btn('Режим экономии вкл/выкл', lambda: ui.sh('rembley-eco toggle'), False), False, False, 4)
+        v.pack_start(btn('Очистить кэш памяти', lambda: (ui.sh('sync; echo 3 > /proc/sys/vm/drop_caches')), False), False, False, 4)
+        return v
+
+    def p_dev(self):
+        v = page('Разработка')
+        self.ssh = Gtk.Switch(); self.ssh.set_halign(Gtk.Align.START); self.ssh.set_active(bool(out('pidof sshd', 1)))
+        self.ssh.connect('state-set', lambda w, s: (ui.sh('mkdir -p /run/sshd; /usr/sbin/sshd' if s else 'pkill sshd'), False)[1])
+        v.pack_start(row('SSH-сервер', self.ssh, 'Вход: ssh root@IP. Пароль root по умолчанию: rembley — смените его ниже!'), False, False, 0)
+        v.pack_start(btn('Сменить пароль root', self.passwd, False), False, False, 4)
+        n = Gtk.Entry(); n.set_text(out('git config --global user.name', 1)); e = Gtk.Entry(); e.set_text(out('git config --global user.email', 1))
+        for w in (n, e): w.connect('focus-in-event', lambda *_: osk(True))
+        v.pack_start(row('Git: имя', n), False, False, 8); v.pack_start(row('Git: e-mail', e), False, False, 0)
+        v.pack_start(btn('Сохранить Git', lambda: (subprocess.run(['git', 'config', '--global', 'user.name', n.get_text()]), subprocess.run(['git', 'config', '--global', 'user.email', e.get_text()])), False), False, False, 4)
+        v.pack_start(btn('Открыть терминал', lambda: ui.sh('xfce4-terminal'), False), False, False, 14)
+        v.pack_start(btn('Магазин приложений', lambda: ui.sh('rembley-store'), False), False, False, 4)
+        return v
+
+    def passwd(self):
+        a = entry_dialog(self, 'Новый пароль root', True)
+        if a and len(a) >= 4:
+            subprocess.run(['chpasswd'], input='root:%s\n' % a, text=True); msg(self, 'Пароль изменён.')
+
+    def p_about(self):
+        v = page('О планшете')
+        mi = {l.split(':')[0]: int(l.split()[1]) for l in open('/proc/meminfo') if ':' in l}
+        st = os.statvfs('/')
+        t = '%s\nЯдро: %s\nПлата: A73 / K37MV1_BSP, MT6737M (Cortex-A53)\nОЗУ: %d МБ\nКорень: %.1f / %.1f ГБ\nUptime: %s\nIP: %s\nПоворот: %s' % (
+            read('/etc/rembley-release'), out('uname -sr', 1), mi['MemTotal'] // 1024, (st.f_blocks - st.f_bavail) * st.f_frsize / 2 ** 30,
+            st.f_blocks * st.f_frsize / 2 ** 30, out('uptime -p', 1), out("ip -4 -o addr show | awk '{print $2\":\"$4}' | grep -v lo | tr '\\n' ' '", 2) or '—', kv_get(RE + '/display.conf', 'ROTATE', 'CW'))
+        l = Gtk.Label(label=t, xalign=0); l.set_selectable(True); v.pack_start(l, False, False, 8)
+        v.pack_start(btn('Собрать отчёт для диагностики', lambda: ui.sh('xfce4-terminal --hold -e rembley-report'), False), False, False, 6)
+        v.pack_start(btn('Обновить Rembley (rembley-update)', lambda: ui.sh('xfce4-terminal --hold -e rembley-update'), False), False, False, 4)
+        return v
+
+
+if __name__ == '__main__':
+    ui.init_theme(); w = Settings(); w.connect('destroy', Gtk.main_quit); Gtk.main()

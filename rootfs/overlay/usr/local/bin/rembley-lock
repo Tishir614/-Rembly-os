@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+"""Rembley lock screen: PIN pad over the blurred wallpaper. PIN hash lives in /etc/rembley/pin (salt$sha256).
+usage: rembley-lock            lock now (no PIN set -> single 'Unlock' button)
+       rembley-lock --set PIN  set PIN (empty string removes it)"""
+import hashlib, os, sys, time
+sys.path[:0] = ['/usr/local/lib/rembley', os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'lib', 'rembley')]
+PINF = os.environ.get('REMBLEY_PIN_FILE', '/etc/rembley/pin')
+
+
+def hashed(pin, salt): return hashlib.sha256((salt + pin).encode()).hexdigest()
+
+
+if len(sys.argv) > 2 and sys.argv[1] == '--set':
+    if sys.argv[2] == '':
+        try: os.remove(PINF)
+        except FileNotFoundError: pass
+    else:
+        salt = os.urandom(8).hex(); os.makedirs(os.path.dirname(PINF), exist_ok=True)
+        open(PINF, 'w').write('%s$%s' % (salt, hashed(sys.argv[2], salt))); os.chmod(PINF, 0o600)
+    sys.exit(0)
+
+import rembleyui as ui
+from rembleyui import *
+
+RU_DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
+RU_MON = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря']
+
+
+class Lock(Win):
+    def __init__(self, sw, sh, wall, blur):
+        super().__init__(wall, blur, (0, 0), type=Gtk.WindowType.TOPLEVEL)
+        self.set_decorated(False); self.set_default_size(sw, sh); self.move(0, 0); self.fullscreen(); self.set_keep_above(True); self.set_skip_taskbar_hint(True)
+        self.salt_hash = open(PINF).read().strip().split('$') if os.path.exists(PINF) else None
+        self.pin = ''
+        panel = Glass(orientation=Gtk.Orientation.VERTICAL, radius=30, tint=(0.06, 0.05, 0.14, 0.82), halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
+        panel.set_border_width(28); self.add(panel)
+        c = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, halign=Gtk.Align.CENTER); panel.pack_start(c, True, True, 0)
+        self.clock = Gtk.Label(); self.clock.get_style_context().add_class('clock'); c.pack_start(self.clock, False, False, 0)
+        self.date = Gtk.Label(); self.date.get_style_context().add_class('date'); c.pack_start(self.date, False, False, 0)
+        self.msg = Gtk.Label(label='Введите PIN' if self.salt_hash else ''); self.msg.get_style_context().add_class('small'); c.pack_start(self.msg, False, False, 8)
+        if self.salt_hash:
+            g = Gtk.Grid(row_spacing=8, column_spacing=8, halign=Gtk.Align.CENTER)
+            for i, k in enumerate(['1', '2', '3', '4', '5', '6', '7', '8', '9', '⌫', '0', '✓']):
+                b = Gtk.Button(label=k); b.get_style_context().add_class('ws'); b.set_size_request(84, 64)
+                b.connect('clicked', lambda _b, k=k: self.key(k)); g.attach(b, i % 3, i // 3, 1, 1)
+            c.pack_start(g, False, False, 0)
+        else:
+            b = Gtk.Button(label='Разблокировать'); b.get_style_context().add_class('ws'); b.set_size_request(240, 64)
+            b.connect('clicked', lambda _b: self.unlock()); c.pack_start(b, False, False, 12)
+        self.tick(); GLib.timeout_add_seconds(1, self.tick)
+        self.connect('map-event', lambda *_: GLib.idle_add(self.grab))
+
+    def grab(self):
+        try:
+            self.get_window().get_display().get_default_seat().grab(self.get_window(), Gdk.SeatCapabilities.ALL, True, None, None, None, None)
+        except Exception: pass
+        return False
+
+    def tick(self):
+        t = time.localtime(); self.clock.set_text(time.strftime('%H:%M', t))
+        self.date.set_text('%s, %d %s' % (RU_DAYS[t.tm_wday], t.tm_mday, RU_MON[t.tm_mon - 1])); return True
+
+    def key(self, k):
+        if k == '⌫': self.pin = self.pin[:-1]
+        elif k == '✓': return self.check()
+        elif len(self.pin) < 12: self.pin += k
+        self.msg.set_text('●' * len(self.pin) or 'Введите PIN')
+        if len(self.pin) >= 4 and False: self.check()
+
+    def check(self):
+        salt, h = self.salt_hash[0], self.salt_hash[1]
+        if hashed(self.pin, salt) == h: self.unlock()
+        else: self.pin = ''; self.msg.set_text('Неверный PIN')
+
+    def unlock(self):
+        try: self.get_window().get_display().get_default_seat().ungrab()
+        except Exception: pass
+        Gtk.main_quit()
+
+
+if __name__ == '__main__':
+    ui.init_theme(); sw, sh = screen_size(); wall, blur = load_wallpaper(sw, sh)
+    w = Lock(sw, sh, wall, blur); w.show_all(); w.present(); Gtk.main()

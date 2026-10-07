@@ -30,17 +30,20 @@ L
 printf '#!/bin/sh\nexit 101\n' > "$R/usr/sbin/policy-rc.d"; chmod +x "$R/usr/sbin/policy-rc.d"
 
 PKGS_MIN="git python3 python3-pip python3-venv build-essential cmake make gdb nodejs wget curl htop tmux vim-tiny rsync zip unzip \
- openssh-client neofetch bluez usbutils net-tools wpasupplicant iw rfkill ppp wireless-tools earlyoom"
+ openssh-client neofetch bluez usbutils net-tools wpasupplicant iw rfkill ppp wireless-tools earlyoom \
+ tzdata locales ncdu mc alsa-utils"
 # Light desktop: Xorg + xfwm4 (no compositor) + our own GTK shell instead of full XFCE session/panel/xfdesktop.
 PKGS_DESK="xserver-xorg-core xserver-xorg-video-fbdev xserver-xorg-input-libinput xinit x11-xserver-utils x11-utils xinput unclutter \
  xfwm4 xfce4-settings xfce4-terminal xfce4-taskmanager xfce4-appfinder thunar mousepad dbus-x11 \
  python3-gi python3-gi-cairo gir1.2-gtk-3.0 python3-pil wmctrl playerctl onboard \
  fonts-noto-core fonts-dejavu-core papirus-icon-theme adwaita-icon-theme gtk2-engines-pixbuf \
- netsurf-gtk geany galculator mpv gpicview atril audacious file-roller"
+ netsurf-gtk geany galculator mpv gpicview atril audacious file-roller \
+ dunst libnotify-bin xprintidle scrot x11-xkb-utils xdg-utils"
 chroot "$R" /usr/bin/env DEBIAN_FRONTEND=noninteractive sh -ec "
   apt-get update
   apt-get install -y --no-install-recommends $PKGS_MIN $( [ "$PROFILE" = desktop ] && echo "$PKGS_DESK" )
-  locale-gen C.UTF-8 >/dev/null 2>&1 || true
+  for l in ru_RU.UTF-8 en_US.UTF-8; do locale-gen \$l >/dev/null 2>&1 || true; done; update-locale LANG=ru_RU.UTF-8 2>/dev/null || true
+  ln -sf /usr/share/zoneinfo/UTC /etc/localtime; echo UTC > /etc/timezone
   echo root:rembley | chpasswd
   ssh-keygen -A
   apt-get clean; rm -rf /var/lib/apt/lists/*"
@@ -56,7 +59,8 @@ if [ -f "$OUT/android-blobs.tar.gz" ]; then      # Wi-Fi/BT/modem blobs from the
   echo "== adding android blobs"; tar -xzf "$OUT/android-blobs.tar.gz" -C "$R"
 else echo "NOTE: out/android-blobs.tar.gz not found -> no Wi-Fi/BT/SIM (see docs/NETWORK.md)"; fi
 ln -sf /bin/sh "$R/system/bin/sh"        # adbd (started by stage 1) expects /system/bin/sh
-chmod +x "$R/usr/sbin/init"; [ -e "$R/sbin/init" ] || ln -s /usr/sbin/init "$R/sbin/init"
+date +%s > "$R/etc/rembley/buildtime"
+chmod +x "$R/usr/sbin/init" "$R"/usr/local/bin/rembley-* "$R"/etc/rembley/rc.d/*.sh "$R/etc/rembley/udhcpc.script"; [ -e "$R/sbin/init" ] || ln -s /usr/sbin/init "$R/sbin/init"
 cleanup; trap - EXIT
 
 echo "== packing ext4 image (${SIZE} MiB, label REMBLEY)"

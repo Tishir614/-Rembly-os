@@ -1,0 +1,10 @@
+#!/bin/sh
+# Battery saver: powersave governor + shorter screen timeouts (read by rembley-power). usage: rembley-eco on|off|toggle|status
+mkdir -p /run/rembley
+set_gov() { for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do echo "$1" > "$g" 2>/dev/null; done; }
+case "$1" in
+  on)  touch /run/rembley/eco; set_gov powersave; notify-send "Экономия включена" 2>/dev/null ;;
+  off) rm -f /run/rembley/eco; set_gov interactive; notify-send "Экономия выключена" 2>/dev/null ;;
+  toggle) if [ -e /run/rembley/eco ]; then "$0" off; else "$0" on; fi ;;
+  *) [ -e /run/rembley/eco ] && echo on || echo off ;;
+esac

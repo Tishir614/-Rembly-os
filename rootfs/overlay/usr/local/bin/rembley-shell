@@ -3,171 +3,11 @@
 
 Glass look = a blurred copy of the wallpaper painted behind each panel (done once, so it costs
 nothing while running). Windows: home (desktop layer), bar (dock + workspaces + tray, with strut),
-launcher (all apps)."""
-import glob, json, math, os, shutil, subprocess, sys, threading, time, urllib.request
-
-import gi
-gi.require_version('Gtk', '3.0'); gi.require_version('Gdk', '3.0')
-from gi.repository import Gtk, Gdk, GLib, Gio, Pango
-try:
-    gi.require_version('GdkX11', '3.0'); from gi.repository import GdkX11
-except Exception:
-    GdkX11 = None
-import cairo
-from PIL import Image, ImageFilter
-
-DEMO = bool(os.environ.get('REMBLEY_DEMO'))          # fills widgets with sample data (screenshots only)
-CFG = os.path.expanduser('~/.config/rembley'); os.makedirs(CFG, exist_ok=True)
-SHARE = os.environ.get('REMBLEY_SHARE', '/usr/share/rembley')
-BAR = 68
-USER = os.environ.get('REMBLEY_USER') or (open(CFG + '/user').read().strip() if os.path.exists(CFG + '/user') else 'Rembley')
-
-RU_DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
-RU_MON = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря']
-
-CSS = b"""
-window.rl-win { background-color: transparent; background-image: none; }
-label { color: #ece6ff; }
-.rl-title { font-weight: 600; font-size: 15px; color: #f3eeff; }
-.clock { font-size: 66px; font-weight: 300; color: #f6f1ff; text-shadow: 0 0 20px rgba(165,135,255,0.95); }
-.date { font-size: 17px; color: #e4dcff; text-shadow: 0 0 8px rgba(120,90,220,0.9); }
-.small { font-size: 12px; color: #cfc6ee; }
-.name { font-size: 16px; font-weight: 600; color: #fff; }
-.online { font-size: 12px; color: #b9aee6; }
-.temp { font-size: 30px; color: #fff; }
-.side-item { padding: 0 12px; border-radius: 14px; min-height: 42px; background-image: none; background-color: transparent;
-             border: none; box-shadow: none; color: #ece6ff; font-size: 15px; }
-.side-item:hover, .side-item:active, .side-item.active { background-image: linear-gradient(90deg, rgba(196,120,196,0.60), rgba(120,92,205,0.38)); }
-.tile { background-image: none; background-color: transparent; border: none; box-shadow: none; border-radius: 16px; padding: 6px 2px; color: #e9e3ff; font-size: 12px; }
-.tile:hover, .tile:active { background-color: rgba(255,255,255,0.14); }
-.dockbtn { background-image: none; background-color: transparent; border: none; box-shadow: none; border-radius: 16px; padding: 4px; min-width: 44px; min-height: 44px; }
-.dockbtn:hover, .dockbtn:active { background-color: rgba(255,255,255,0.18); }
-.ws { background-image: none; background-color: rgba(255,255,255,0.07); border: 1px solid rgba(190,170,255,0.25); border-radius: 12px; color: #e8e0ff; min-width: 48px; min-height: 40px; padding: 0; font-size: 14px; box-shadow: none; }
-.ws.cur { border: 2px solid #c08cff; background-color: rgba(190,140,255,0.28); }
-.tray { color: #f0eaff; font-size: 14px; }
-.note-box { background-color: #fdeea6; border-radius: 6px; }
-.note-box textview, .note-box textview text { background-color: #fdeea6; color: #3a3320; font-size: 14px; }
-.note-title { color: #3a3320; font-weight: 600; font-size: 13px; }
-.note-btn { background-image: none; background-color: transparent; border: none; box-shadow: none; color: #3a3320; min-width: 30px; min-height: 30px; padding: 0; font-size: 20px; }
-.mbtn { background-image: none; background-color: transparent; border: none; box-shadow: none; padding: 2px 10px; min-height: 40px; }
-.mbtn:active { background-color: rgba(255,255,255,0.18); border-radius: 14px; }
-entry.rl-search { background-color: rgba(255,255,255,0.12); color: #fff; border-radius: 14px; border: 1px solid rgba(190,170,255,0.3); min-height: 38px; }
-"""
-
-_KEEP = []
-
-
-def surface_from(im):
-    r, g, b = im.convert('RGB').split()
-    im = Image.merge('RGBA', (b, g, r, Image.new('L', im.size, 255)))
-    buf = bytearray(im.tobytes()); _KEEP.append(buf)
-    return cairo.ImageSurface.create_for_data(buf, cairo.FORMAT_ARGB32, im.size[0], im.size[1], im.size[0] * 4)
-
-
-def load_wallpaper(w, h):
-    path = os.environ.get('REMBLEY_WALL') or next((p for p in (CFG + '/wallpaper.png', CFG + '/wallpaper.jpg',
-                                                               SHARE + '/wallpaper.png') if os.path.exists(p)), None)
-    if path:
-        im = Image.open(path).convert('RGB')
-        s = max(w / im.width, h / im.height)
-        im = im.resize((math.ceil(im.width * s), math.ceil(im.height * s)), Image.BILINEAR)
-        l, t = (im.width - w) // 2, (im.height - h) // 2
-        im = im.crop((l, t, l + w, t + h))
-    else:
-        im = Image.new('RGB', (w, h), (30, 22, 70))
-    small = im.resize((max(1, w // 4), max(1, h // 4)), Image.BILINEAR).filter(ImageFilter.GaussianBlur(4))
-    return surface_from(im), surface_from(small.resize((w, h), Image.BILINEAR))
-
-
-def rrect(cr, x, y, w, h, r):
-    r = min(r, w / 2, h / 2)
-    cr.new_sub_path()
-    cr.arc(x + w - r, y + r, r, -math.pi / 2, 0); cr.arc(x + w - r, y + h - r, r, 0, math.pi / 2)
-    cr.arc(x + r, y + h - r, r, math.pi / 2, math.pi); cr.arc(x + r, y + r, r, math.pi, 1.5 * math.pi)
-    cr.close_path()
-
-
-class Glass(Gtk.Box):
-    """Rounded translucent panel painted from the blurred wallpaper. Content lives in self.inner,
-    so padding is done with margins (border_width would shift the draw origin)."""
-    def __init__(self, radius=22, tint=(0.08, 0.06, 0.17, 0.58), orientation=Gtk.Orientation.HORIZONTAL, spacing=0, **kw):
-        super().__init__(orientation=Gtk.Orientation.VERTICAL, **kw)
-        self.radius, self.tint = radius, tint
-        self.set_has_window(False)
-        self.inner = Gtk.Box(orientation=orientation, spacing=spacing)
-        Gtk.Box.pack_start(self, self.inner, True, True, 0)
-
-    def pack_start(self, *a): self.inner.pack_start(*a)
-    def pack_end(self, *a): self.inner.pack_end(*a)
-    def set_spacing(self, n): self.inner.set_spacing(n)
-
-    def set_border_width(self, n):
-        for side in ('top', 'bottom', 'start', 'end'): self.inner.set_property('margin-' + side, n)
-
-    def do_draw(self, cr):
-        w, h = self.get_allocated_width(), self.get_allocated_height()
-        top = self.get_toplevel(); ox, oy = getattr(top, 'origin', (0, 0))
-        pos = self.translate_coordinates(top, 0, 0) or (0, 0)
-        blur = getattr(top, 'blur', None)
-        cr.save(); rrect(cr, 0.5, 0.5, w - 1, h - 1, self.radius); cr.clip_preserve()
-        if blur is not None:
-            cr.set_source_surface(blur, -(pos[0] + ox), -(pos[1] + oy)); cr.paint()
-        cr.set_source_rgba(*self.tint); cr.paint(); cr.restore()
-        rrect(cr, 0.75, 0.75, w - 1.5, h - 1.5, self.radius)
-        cr.set_source_rgba(0.72, 0.66, 1.0, 0.38); cr.set_line_width(1.3); cr.stroke()
-        return Gtk.Box.do_draw(self, cr)
-
-
-class Win(Gtk.Window):
-    def __init__(self, wall=None, blur=None, origin=(0, 0), **kw):
-        super().__init__(**kw)
-        self.wall, self.blur, self.origin = wall, blur, origin
-        self.get_style_context().add_class('rl-win')
-        self.set_app_paintable(True)
-
-    def do_draw(self, cr):
-        if self.wall is not None:
-            ox, oy = self.origin
-            cr.set_source_surface(self.wall, -ox, -oy); cr.paint()
-        return Gtk.Window.do_draw(self, cr)
-
-
-THEME = None
-
-
-def icon(names, px):
-    names = [names] if isinstance(names, str) else names
-    for n in names:
-        try:
-            if THEME.has_icon(n):
-                return Gtk.Image.new_from_pixbuf(THEME.load_icon(n, px, Gtk.IconLookupFlags.FORCE_SIZE))
-        except Exception:
-            pass
-    return Gtk.Image.new_from_icon_name('application-x-executable', Gtk.IconSize.DIALOG)
-
-
-def sh(cmd):
-    try:
-        subprocess.Popen(cmd, shell=True, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        pass
-
-
-def out(cmd, t=3):
-    try:
-        return subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=t).stdout.strip()
-    except Exception:
-        return ''
-
-
-def osk(show=True):
-    sh('dbus-send --type=method_call --dest=org.onboard.Onboard /org/onboard/Onboard/Keyboard '
-       'org.onboard.Onboard.Keyboard.%s' % ('Show' if show else 'Hide'))
-
-
-def have(exe):
-    return bool(shutil.which(exe.split()[0]))
-
+launcher (all apps), quick settings, task switcher."""
+import glob, json, math, os, shutil, signal, subprocess, sys, threading, time, urllib.request
+sys.path[:0] = ['/usr/local/lib/rembley', os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'lib', 'rembley')]
+import rembleyui as ui
+from rembleyui import *
 
 # name, icon names, command
 APPS = [
@@ -184,50 +24,13 @@ APPS = [
     ('PDF', ['atril', 'application-pdf'], 'atril'),
     ('Сеть', ['network-wireless', 'preferences-system-network'], 'rembley-netui'),
     ('Диспетчер', ['utilities-system-monitor'], 'xfce4-taskmanager'),
-    ('Настройки', ['preferences-system', 'xfce4-settings-manager'], 'xfce4-settings-manager'),
+    ('Настройки', ['preferences-system', 'xfce4-settings-manager'], 'rembley-settings'),
+    ('Магазин', ['softwarecenter', 'system-software-install', 'applications-other'], 'rembley-store'),
 ]
 
 
 def avail_apps():
     return [a for a in APPS if DEMO or have(a[2])]
-
-
-class Gauge(Gtk.DrawingArea):
-    def __init__(self, label, size=76):
-        super().__init__(); self.label, self.val, self.text = label, 0.0, ''
-        self.set_size_request(size, size)
-
-    def set(self, val, text):
-        self.val, self.text = val, text; self.queue_draw()
-
-    def do_draw(self, cr):
-        w, h = self.get_allocated_width(), self.get_allocated_height(); r = min(w, h) / 2 - 5
-        cx, cy = w / 2, h / 2; cr.set_line_width(5); cr.set_line_cap(cairo.LINE_CAP_ROUND)
-        cr.set_source_rgba(1, 1, 1, 0.14); cr.arc(cx, cy, r, 0, 2 * math.pi); cr.stroke()
-        if self.val > 0.005:
-            g = cairo.LinearGradient(0, 0, w, h); g.add_color_stop_rgb(0, .55, .45, 1); g.add_color_stop_rgb(1, .86, .55, 1)
-            cr.set_source(g); cr.arc(cx, cy, r, -math.pi / 2, -math.pi / 2 + 2 * math.pi * min(1, self.val)); cr.stroke()
-        for txt, dy, size, a in ((self.label, -8, 13, 1.0), (self.text, 11, 11, 0.75)):
-            cr.set_source_rgba(.93, .9, 1, a); cr.select_font_face('Noto Sans', 0, 1 if dy < 0 else 0); cr.set_font_size(size)
-            ext = cr.text_extents(txt); cr.move_to(cx - ext.width / 2 - ext.x_bearing, cy + dy + 4); cr.show_text(txt)
-
-
-class Avatar(Gtk.DrawingArea):
-    def __init__(self, size=52):
-        super().__init__(); self.set_size_request(size, size)
-
-    def do_draw(self, cr):
-        w, h = self.get_allocated_width(), self.get_allocated_height(); r = min(w, h) / 2 - 2
-        cx, cy = w / 2, h / 2 + 3
-        g = cairo.LinearGradient(0, 0, w, h); g.add_color_stop_rgb(0, .85, .8, 1); g.add_color_stop_rgb(1, .55, .5, .9)
-        cr.set_source(g); cr.arc(w / 2, h / 2, r, 0, 2 * math.pi); cr.fill()
-        cr.set_source_rgb(.98, .97, 1)                       # cat head
-        cr.arc(cx, cy, r * .62, 0, 2 * math.pi); cr.fill()
-        for s in (-1, 1):
-            cr.move_to(cx + s * r * .62, cy - r * .1); cr.line_to(cx + s * r * .5, cy - r * .85); cr.line_to(cx + s * r * .1, cy - r * .5); cr.close_path(); cr.fill()
-        cr.set_source_rgb(.3, .2, .55)
-        for s in (-1, 1):
-            cr.arc(cx + s * r * .25, cy, r * .07, 0, 2 * math.pi); cr.fill()
 
 
 class Home(Win):
@@ -266,7 +69,7 @@ class Home(Win):
                  ('Мультимедиа', 'applications-multimedia', lambda: self.open_launcher('AudioVideo')),
                  ('Игры', 'applications-games', lambda: self.open_launcher('Game')),
                  ('Система', 'applications-system', lambda: self.open_launcher('System')),
-                 ('Настройки', 'preferences-system', lambda: sh('xfce4-settings-manager'))]
+                 ('Настройки', 'preferences-system', lambda: sh('rembley-settings'))]
         self.side = []
         for label, ic, fn in items:
             b = Gtk.Button(); b.set_relief(Gtk.ReliefStyle.NONE); b.get_style_context().add_class('side-item')
@@ -504,7 +307,7 @@ class Launcher(Win):
 
 
 def power_dialog(parent):
-    d = Gtk.Dialog(title='Выключение', transient_for=parent, modal=True); d.set_decorated(False)
+    d = Gtk.Dialog(title='Выключение', transient_for=parent, modal=True); d.set_decorated(False); d.set_keep_above(True)
     d.get_content_area().set_border_width(18)
     d.get_content_area().pack_start(Gtk.Label(label='Что сделать с планшетом?'), False, False, 10)
     for txt, rid in (('Выключить', 1), ('Перезагрузить', 2), ('Отмена', 0)):
@@ -512,6 +315,129 @@ def power_dialog(parent):
     d.show_all(); r = d.run(); d.destroy()
     if r == 1: sh('sync; /bin/busybox poweroff -f')
     elif r == 2: sh('sync; /bin/busybox reboot -f')
+
+
+def read(path, default=''):
+    try: return open(path).read().strip()
+    except Exception: return default
+
+
+def audio_ctl():
+    n = out("amixer scontrols 2>/dev/null | head -1 | sed -n \"s/.*'\\(.*\\)'.*/\\1/p\"", 2)
+    return n or 'Master'
+
+
+class QuickPanel(Win):
+    inst = None
+
+    @classmethod
+    def toggle(cls, sw, sh_, wall, blur):
+        if cls.inst is not None and cls.inst.get_visible():
+            cls.inst.hide(); return
+        if cls.inst is None: cls.inst = cls(sw, sh_, wall, blur)
+        cls.inst.refresh(); cls.inst.show_all(); cls.inst.present()
+
+    def __init__(self, sw, sh_, wall, blur):
+        w, h = 372, 520
+        super().__init__(wall, blur, (sw - w - 16, sh_ - BAR - h - 8), type=Gtk.WindowType.TOPLEVEL)
+        self.set_decorated(False); self.set_default_size(w, h); self.move(sw - w - 16, sh_ - BAR - h - 8)
+        self.set_type_hint(Gdk.WindowTypeHint.DIALOG); self.set_skip_taskbar_hint(True); self.set_keep_above(True)
+        self.connect('focus-out-event', lambda *_: (self.hide(), False)[1])
+        box = Glass(orientation=Gtk.Orientation.VERTICAL, spacing=8, radius=26, tint=(0.07, 0.05, 0.16, 0.84)); box.set_border_width(16)
+        self.add(box)
+        t = Gtk.Label(label='Быстрые настройки', xalign=0); t.get_style_context().add_class('rl-title'); box.pack_start(t, False, False, 4)
+        self.bl = backlight_path(); self.ac = audio_ctl()
+        self.s_br = self.slider(box, ['display-brightness', 'weather-clear'], 5, 255, self.set_brightness)
+        self.s_vol = self.slider(box, ['audio-volume-high', 'audio-speakers'], 0, 100, self.set_volume)
+        grid = Gtk.Grid(column_homogeneous=True, row_homogeneous=True, row_spacing=4, column_spacing=4); box.pack_start(grid, True, True, 6)
+        self.tg = {}
+        items = [('Wi-Fi', ['network-wireless', 'network-wireless-signal-excellent'], lambda: sh('rembley-netui')),
+                 ('Bluetooth', ['bluetooth'], lambda: sh('rembley-netui bt')),
+                 ('SIM', ['network-cellular-signal-excellent', 'phone'], lambda: sh('rembley-netui modem')),
+                 ('Клавиатура', ['input-keyboard'], lambda: sh('dbus-send --type=method_call --dest=org.onboard.Onboard /org/onboard/Onboard/Keyboard org.onboard.Onboard.Keyboard.ToggleVisible')),
+                 ('Скриншот', ['applets-screenshooter', 'camera-photo', 'image-x-generic'], self.screenshot),
+                 ('Не беспокоить', ['notification-disabled', 'preferences-system-notifications'], lambda: (sh('dunstctl set-paused toggle'))),
+                 ('Экономия', ['battery-good', 'battery'], lambda: sh('rembley-eco toggle')),
+                 ('Поворот', ['object-rotate-right', 'view-refresh'], self.rotate),
+                 ('Блокировка', ['system-lock-screen', 'lock'], lambda: (self.hide(), sh('rembley-lock'))),
+                 ('Настройки', ['preferences-system'], lambda: (self.hide(), sh('rembley-settings'))),
+                 ('Отчёт', ['dialog-information', 'help-about'], lambda: (self.hide(), sh('xfce4-terminal -e "rembley-report"'))),
+                 ('Выключение', ['system-shutdown'], lambda: (self.hide(), power_dialog(None)))]
+        for i, (name, ic, fn) in enumerate(items):
+            b = Gtk.Button(); b.set_relief(Gtk.ReliefStyle.NONE); b.get_style_context().add_class('tile')
+            v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2); v.pack_start(icon(ic, 32), False, False, 0)
+            l = Gtk.Label(label=name); l.set_ellipsize(Pango.EllipsizeMode.END); l.set_max_width_chars(12); v.pack_start(l, False, False, 0)
+            b.add(v); b.connect('clicked', lambda _b, f=fn: f()); grid.attach(b, i % 3, i // 3, 1, 1)
+
+    def slider(self, box, ic, lo, hi, cb):
+        r = Gtk.Box(spacing=10); r.pack_start(icon(ic, 26), False, False, 0)
+        sc = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, lo, hi, 1); sc.set_draw_value(False); sc.set_size_request(-1, 44)
+        sc.connect('value-changed', lambda w: cb(int(w.get_value()))); r.pack_start(sc, True, True, 0); box.pack_start(r, False, False, 0); return sc
+
+    def refresh(self):
+        if self.bl: self.s_br.set_value(int(read(self.bl, '128') or 128))
+        m = out("amixer sget '%s' 2>/dev/null | grep -o '[0-9]*%%' | head -1" % self.ac, 2)
+        self.s_vol.set_value(int(m.strip('%')) if m else 70)
+
+    def set_brightness(self, v):
+        if self.bl: write_sys(self.bl, v)
+
+    def set_volume(self, v):
+        if getattr(self, '_vt', None): GLib.source_remove(self._vt)
+        self._vt = GLib.timeout_add(150, lambda: (sh("amixer -q sset '%s' %d%% unmute" % (self.ac, v)), setattr(self, '_vt', None), False)[2])
+
+    def screenshot(self):
+        self.hide()
+        GLib.timeout_add(400, lambda: (sh('mkdir -p ~/Pictures; f=~/Pictures/screenshot-$(date +%Y%m%d-%H%M%S).png; scrot "$f" && notify-send "Скриншот сохранён" "$f"'), False)[1])
+
+    def rotate(self):
+        order = ['CW', 'none', 'CCW', 'UD']; cur = 'CW'
+        for l in read('/etc/rembley/display.conf').splitlines():
+            if l.startswith('ROTATE='): cur = l.split('=', 1)[1]
+        nxt = order[(order.index(cur) + 1) % 4] if cur in order else 'CW'
+        sh('rembley-rotate %s' % nxt.lower())
+
+
+class Switcher(Win):
+    """Task switcher: one card per open window."""
+    inst = None
+
+    @classmethod
+    def toggle(cls, sw, h, wall, blur):
+        if cls.inst is not None and cls.inst.get_visible():
+            cls.inst.hide(); return
+        if cls.inst is None: cls.inst = cls(sw, h, wall, blur)
+        cls.inst.fill(); cls.inst.show_all(); cls.inst.present()
+
+    def __init__(self, w, h, wall, blur):
+        super().__init__(wall, blur, (0, 0), type=Gtk.WindowType.TOPLEVEL)
+        self.set_decorated(False); self.set_default_size(w, h); self.move(0, 0); self.set_type_hint(Gdk.WindowTypeHint.DIALOG)
+        self.set_skip_taskbar_hint(True); self.set_keep_above(True)
+        outer = Glass(orientation=Gtk.Orientation.VERTICAL, spacing=8, radius=26, tint=(0.06, 0.05, 0.14, 0.86)); outer.set_border_width(16)
+        self.add(outer)
+        top = Gtk.Box(); t = Gtk.Label(label='Открытые окна', xalign=0); t.get_style_context().add_class('rl-title')
+        close = Gtk.Button(label='✕'); close.set_relief(Gtk.ReliefStyle.NONE); close.connect('clicked', lambda _b: self.hide())
+        top.pack_start(t, True, True, 0); top.pack_end(close, False, False, 0); outer.pack_start(top, False, False, 0)
+        self.fb = Gtk.FlowBox(); self.fb.set_selection_mode(Gtk.SelectionMode.NONE); self.fb.set_max_children_per_line(4); self.fb.set_homogeneous(True)
+        sc = Gtk.ScrolledWindow(); sc.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC); sc.add(self.fb); outer.pack_start(sc, True, True, 0)
+
+    def fill(self):
+        for c in self.fb.get_children(): self.fb.remove(c)
+        n = 0
+        for line in out('wmctrl -l -x', 2).splitlines():
+            p = line.split(None, 4)
+            if len(p) < 5 or p[1] == '-1' or p[2].lower().startswith(('rembley', 'xfce4-panel', 'desktop')) or not p[4].strip(): continue
+            wid, cls, title = p[0], p[2].split('.')[0].lower(), p[4]
+            n += 1
+            card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6); card.set_border_width(8)
+            b = Gtk.Button(); b.set_relief(Gtk.ReliefStyle.NONE); b.get_style_context().add_class('tile')
+            v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6); v.pack_start(icon([cls, cls.replace('xfce4-', ''), 'application-x-executable'], 64), False, False, 0)
+            l = Gtk.Label(label=title); l.set_ellipsize(Pango.EllipsizeMode.END); l.set_max_width_chars(22); v.pack_start(l, False, False, 0)
+            b.add(v); b.connect('clicked', lambda _b, i=wid: (sh('wmctrl -ia %s' % i), self.hide()))
+            x = Gtk.Button(label='Закрыть'); x.set_relief(Gtk.ReliefStyle.NONE); x.connect('clicked', lambda _b, i=wid: (sh('wmctrl -ic %s' % i), GLib.timeout_add(500, lambda: (self.fill(), self.show_all(), False)[2])))
+            card.pack_start(b, True, True, 0); card.pack_start(x, False, False, 0); self.fb.add(card)
+        if n == 0: self.fb.add(Gtk.Label(label='Нет открытых окон'))
+        self.fb.show_all()
 
 
 class Bar(Win):
@@ -539,14 +465,17 @@ class Bar(Win):
         items = [('browser', ['web-browser', 'netsurf'], 'netsurf-gtk'), ('files', ['system-file-manager', 'folder'], 'thunar'),
                  ('term', 'utilities-terminal', 'xfce4-terminal'), ('code', ['geany', 'text-editor'], 'geany'),
                  ('music', ['audacious', 'multimedia-audio-player'], 'audacious'), ('photo', ['gpicview', 'image-viewer'], 'gpicview'),
-                 ('set', ['preferences-system', 'xfce4-settings-manager'], 'xfce4-settings-manager')]
-        w = 12 + 9 * 56 + 8
+                 ('set', ['preferences-system', 'xfce4-settings-manager'], 'rembley-settings')]
+        w = 12 + 10 * 56 + 8
         p = self.pill((self.sw - w) // 2, w)
         ha = Gtk.Button(); ha.set_relief(Gtk.ReliefStyle.NONE); ha.get_style_context().add_class('dockbtn'); ha.add(Avatar(38))
         ha.connect('clicked', lambda _b: sh('wmctrl -k on')); p.pack_start(ha, False, False, 0)
         for _, ic, cmd in items:
             b = Gtk.Button(); b.set_relief(Gtk.ReliefStyle.NONE); b.get_style_context().add_class('dockbtn'); b.add(icon(ic, 38))
             b.connect('clicked', lambda _b, c=cmd: sh(c)); p.pack_start(b, False, False, 0)
+        wb = Gtk.Button(); wb.set_relief(Gtk.ReliefStyle.NONE); wb.get_style_context().add_class('dockbtn')
+        wb.add(icon(['preferences-system-windows', 'window-duplicate', 'view-grid'], 38))
+        wb.connect('clicked', lambda _b: Switcher.toggle(self.sw, self.sh - BAR, self.wall, self.blur)); p.pack_start(wb, False, False, 0)
         kb = Gtk.Button(); kb.set_relief(Gtk.ReliefStyle.NONE); kb.get_style_context().add_class('dockbtn')
         kb.add(icon(['input-keyboard', 'keyboard'], 38))
         kb.connect('clicked', lambda _b: sh('dbus-send --type=method_call --dest=org.onboard.Onboard /org/onboard/Onboard/Keyboard org.onboard.Onboard.Keyboard.ToggleVisible'))
@@ -560,7 +489,10 @@ class Bar(Win):
             p.pack_start(b, False, False, 0)
         self.bat = Gtk.Label(); self.bat.get_style_context().add_class('tray')
         self.tc = Gtk.Label(); self.tc.get_style_context().add_class('tray')
-        p.pack_start(self.bat, False, False, 6); p.pack_end(self.tc, False, False, 8)
+        qb = Gtk.Button(); qb.set_relief(Gtk.ReliefStyle.NONE); qb.get_style_context().add_class('dockbtn')
+        row = Gtk.Box(spacing=10); row.pack_start(self.bat, False, False, 0); row.pack_start(self.tc, False, False, 0); qb.add(row)
+        qb.connect('clicked', lambda _b: QuickPanel.toggle(self.sw, self.sh, self.wall, self.blur))
+        p.pack_end(qb, False, False, 0)
 
     def status(self):
         def work():
@@ -631,22 +563,18 @@ def shape_window(gw, rects):
 
 
 def main():
-    global THEME
-    s = Gtk.Settings.get_default()
-    s.set_property('gtk-application-prefer-dark-theme', True)
-    s.set_property('gtk-enable-animations', False)                  # no animation: smoother on this SoC
-    if not os.environ.get('REMBLEY_KEEP_THEME'):
-        for k, v in (('gtk-icon-theme-name', 'Papirus-Dark'), ('gtk-font-name', 'Noto Sans 11')):
-            try: s.set_property(k, v)
-            except Exception: pass
-    THEME = Gtk.IconTheme.get_default()
-    sc = Gdk.Screen.get_default(); sw, sh_ = sc.get_width(), sc.get_height()
+    ui.init_theme()
+    sw, sh_ = screen_size()
     wall, blur = load_wallpaper(sw, sh_)
-    p = Gtk.CssProvider(); p.load_from_data(CSS)
-    Gtk.StyleContext.add_provider_for_screen(sc, p, Gtk.STYLE_PROVIDER_PRIORITY_USER)
     home = Home(sw, sh_, wall, blur); bar = Bar(sw, sh_, wall, blur)
     home.show_all(); bar.show_all()
     home.get_window().lower()
+    # control signals (used by rembley-power for the hardware power key)
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1, lambda: (power_dialog(None), True)[1])
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR2, lambda: (QuickPanel.toggle(sw, sh_, wall, blur), True)[1])
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGHUP, lambda: os.execv(sys.executable, [sys.executable] + sys.argv))
+    if not os.path.exists(CFG + '/first-run-done') and not DEMO:
+        sh('rembley-settings --welcome')
     Gtk.main()
 
 

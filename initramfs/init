@@ -45,10 +45,15 @@ REPORT=/tmp/hwreport.txt
 } >$REPORT 2>&1
 log "hardware report: $REPORT"
 
-# --- framebuffer proof of life: noise on the panel ---
+# --- framebuffer: boot splash (portrait 800x1280 raw image matching bpp), else noise as proof of life ---
 if [ -e /dev/fb0 ]; then
-  dd if=/dev/urandom of=/dev/fb0 bs=65536 count=64 2>/dev/null
-  log "wrote test pattern to fb0"
+  bpp=$(cat /sys/class/graphics/fb0/bits_per_pixel 2>/dev/null); stride=$(cat /sys/class/graphics/fb0/stride 2>/dev/null)
+  if [ -f /splash.$bpp.gz ] && [ -n "$bpp" ] && [ "$stride" = "$((800 * bpp / 8))" ]; then
+    gunzip -c /splash.$bpp.gz > /dev/fb0 2>/dev/null && log "splash drawn (bpp=$bpp)"
+  else
+    dd if=/dev/urandom of=/dev/fb0 bs=65536 count=64 2>/dev/null
+    log "splash skipped (bpp=$bpp stride=$stride): wrote noise to fb0"
+  fi
 fi
 
 # --- backlight on (LK normally leaves it on; this is a safety net) ---
