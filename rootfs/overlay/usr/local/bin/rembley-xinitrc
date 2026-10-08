@@ -1,4 +1,5 @@
 #!/bin/sh
+# Runs inside Xorg. Everything graphical must live under ONE D-Bus session (onboard, dunst, shell talk over it).
 export XDG_CURRENT_DESKTOP=XFCE GTK_OVERLAY_SCROLLING=1 GDK_SCALE=1
 [ -f /etc/rembley/display.conf ] && . /etc/rembley/display.conf; DPI=${DPI:-140}
 [ -f /etc/rembley/kbd.conf ] && . /etc/rembley/kbd.conf
@@ -11,12 +12,4 @@ xset r rate 300 35 2>/dev/null
   if ! xinput list --name-only 2>/dev/null | grep -q 'mtk-tpd'; then
     if [ ! -e /run/rembley/static-input ]; then touch /run/rembley/static-input; pkill -x Xorg; fi
   fi ) &
-unclutter -idle 2 -root 2>/dev/null &                 # hide the mouse cursor when idle (touch use)
-dunst 2>/dev/null &                                    # notifications
-xfsettingsd 2>/dev/null &                              # applies theme/fonts from xfconf
-xfwm4 --compositor=off 2>/dev/null &                   # window manager, no compositing = no lag
-onboard 2>/dev/null &
-( sleep 4; dbus-send --type=method_call --dest=org.onboard.Onboard /org/onboard/Onboard/Keyboard org.onboard.Onboard.Keyboard.Hide ) 2>/dev/null &
-rembley-power >/var/log/rembley-power.log 2>&1 &          # screen dim/off, power key, low battery, clock stamp
-sleep 1
-exec dbus-launch --exit-with-session /usr/local/bin/rembley-shell
+exec dbus-launch --exit-with-session /usr/local/bin/rembley-desktop

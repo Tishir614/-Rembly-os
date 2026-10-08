@@ -7,6 +7,7 @@
 # MAC addresses are never generated or hard-coded here.
 #
 # usage: rembley-net auto | wifi-up | wifi-down | wifi-scan | wifi-connect SSID [PSK] | wifi-status | mac
+#        rembley-net wifi-select SSID   (saved network)
 #        rembley-net usb-ppp on|off     (IP over USB: CDC-ACM serial + PPP, because the kernel has no RNDIS/ECM)
 #        rembley-net bt-up              (explains why Bluetooth is unavailable with this kernel)
 #        rembley-net nvdata | firmware | diag | modem-probe | modem-up | modem-down | status
@@ -140,6 +141,14 @@ case "$1" in
     for i in 1 2 3 4 5 6 7 8 9 10 11 12; do wpa_cli -i $IF status | grep -q 'wpa_state=COMPLETED' && break; sleep 1; done
     wpa_cli -i $IF status | grep -q 'wpa_state=COMPLETED' || { log "association failed (wrong password?)"; wpa_cli -i $IF remove_network $N >/dev/null; wpa_cli -i $IF save_config >/dev/null; exit 1; }
     dhcp; ip -4 addr show $IF | grep inet; /bin/busybox ntpd -n -q -p pool.ntp.org >/dev/null 2>&1 & ;;
+  wifi-select)   # reconnect to an already saved network (no password needed)
+    SSID=$2; wifi_up || exit 1
+    N=$(wpa_cli -i $IF list_networks | awk -F'\t' -v s="$SSID" '$2==s{print $1; exit}')
+    [ -n "$N" ] || { log "network '$SSID' is not saved"; exit 1; }
+    wpa_cli -i $IF enable_network $N >/dev/null; wpa_cli -i $IF select_network $N >/dev/null
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12; do wpa_cli -i $IF status | grep -q 'wpa_state=COMPLETED' && break; sleep 1; done
+    wpa_cli -i $IF status | grep -q 'wpa_state=COMPLETED' || { log "could not connect to $SSID"; exit 1; }
+    dhcp; ip -4 addr show $IF | grep inet ;;
   wifi-status) wpa_cli -i $IF status 2>&1 | grep -E 'ssid=|wpa_state|ip_address'; ip -4 addr show $IF 2>/dev/null | grep inet ;;
   mac) wifi_mac_report ;;
   nvdata) nvdata ;;

@@ -73,14 +73,16 @@ class Settings(Gtk.Window):
     def p_profile(self):
         v = page('Добро пожаловать в Rembley OS' if WELCOME else 'Профиль')
         if WELCOME:
-            t = Gtk.Label(label='Первый запуск: задайте имя, город для погоды, часовой пояс (вкладка «Время и язык») и нажмите «Готово».', xalign=0)
+            t = Gtk.Label(label='Первый запуск (всё делается пальцем, клавиатура появляется сама): подключите Wi-Fi, задайте имя и город, часовой пояс (вкладка «Время и язык») и нажмите «Готово».', xalign=0)
             t.set_line_wrap(True); v.pack_start(t, False, False, 6)
         self.name = Gtk.Entry(); self.name.set_text(read(CFG + '/user', 'Rembley')); v.pack_start(row('Имя на экране', self.name), False, False, 0)
         self.city = Gtk.Entry(); self.city.set_text(read(CFG + '/city')); self.city.set_placeholder_text('например Antalya (пусто = по IP)')
         v.pack_start(row('Город для погоды', self.city, 'Погода берётся с wttr.in, нужен интернет.'), False, False, 0)
         for e in (self.name, self.city): e.connect('focus-in-event', lambda *_: osk(True))
         v.pack_start(btn('Сохранить и применить', self.save_profile, False), False, False, 4)
-        if WELCOME: v.pack_start(btn('Готово — начать пользоваться', self.finish, False), False, False, 4)
+        if WELCOME:
+            v.pack_start(btn('1. Подключить Wi-Fi (откроется список сетей)', lambda: ui.sh('rembley-netui wifi'), False), False, False, 4)
+            v.pack_start(btn('Готово — начать пользоваться', self.finish, False), False, False, 4)
         return v
 
     def save_profile(self):

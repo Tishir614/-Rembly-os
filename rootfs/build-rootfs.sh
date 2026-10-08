@@ -8,9 +8,10 @@ HERE=$(cd "$(dirname "$0")/.." && pwd); OUT=$HERE/out; R=${ROOTFS_DIR:-/var/remb
 MIRROR=${MIRROR:-https://ports.ubuntu.com/ubuntu-ports}
 mkdir -p "$OUT" "$(dirname "$R")"
 
+# qemu-user must be registered for armhf binaries on every run (it is lost after reboot)
+[ -e /proc/sys/fs/binfmt_misc/qemu-arm ] || { mountpoint -q /proc/sys/fs/binfmt_misc || mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc
+  head -1 /usr/lib/binfmt.d/qemu-arm.conf > /proc/sys/fs/binfmt_misc/register; }
 if [ ! -f "$R/etc/os-release" ]; then
-  [ -e /proc/sys/fs/binfmt_misc/qemu-arm ] || { mountpoint -q /proc/sys/fs/binfmt_misc || mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc
-    head -1 /usr/lib/binfmt.d/qemu-arm.conf > /proc/sys/fs/binfmt_misc/register; }
   debootstrap --arch=armhf --variant=minbase --components=main,universe \
     --include=ca-certificates,iproute2,openssh-server,nano,less,kmod,udev,sudo,busybox-static,dbus,locales \
     focal "$R" "$MIRROR" /usr/share/debootstrap/scripts/gutsy
@@ -37,7 +38,7 @@ PKGS_DESK="xserver-xorg-core xserver-xorg-video-fbdev xserver-xorg-input-libinpu
  xfwm4 xfce4-settings xfce4-terminal xfce4-taskmanager xfce4-appfinder thunar mousepad dbus-x11 \
  python3-gi python3-gi-cairo gir1.2-gtk-3.0 python3-pil wmctrl playerctl onboard \
  fonts-noto-core fonts-dejavu-core papirus-icon-theme adwaita-icon-theme gtk2-engines-pixbuf \
- netsurf-gtk geany galculator mpv gpicview atril audacious file-roller \
+ libglib2.0-bin netsurf-gtk geany galculator mpv gpicview atril audacious file-roller \
  dunst libnotify-bin xprintidle scrot x11-xkb-utils xdg-utils"
 chroot "$R" /usr/bin/env DEBIAN_FRONTEND=noninteractive sh -ec "
   apt-get update
@@ -52,6 +53,7 @@ rm -f "$R/usr/sbin/policy-rc.d"
 # overlay LAST so our /sbin/init replaces systemd's
 rm -f "$R/usr/sbin/init" "$R/sbin/init"   # was a symlink to systemd; never write through it
 cp -a --remove-destination "$HERE/rootfs/overlay/." "$R/"
+chroot "$R" glib-compile-schemas --strict /usr/share/glib-2.0/schemas   # Onboard auto-show + docking defaults (99_rembley override)
 rm -f "$R/etc/X11/xorg.conf.d/20-touch.conf" "$R/etc/X11/xorg.conf.d/10-fbdev.conf"   # superseded by files generated at session start
 mkdir -p "$R/system/bin" "$R/var/log" "$R/run/user" "$R/root/Projects"
 ln -sf /bin/busybox "$R/sbin/mdev"

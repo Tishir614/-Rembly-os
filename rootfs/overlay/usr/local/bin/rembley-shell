@@ -497,7 +497,9 @@ class Bar(Win):
     def status(self):
         def work():
             wl = ''
-            try: wl = open('/sys/class/net/wlan0/operstate').read().strip()
+            try:
+                wl = open('/sys/class/net/wlan0/operstate').read().strip()
+                if wl == 'up' and 'Connected' not in out('iw dev wlan0 link 2>/dev/null', 2): wl = 'down'   # up but not associated
             except Exception: pass
             btm = 'on' if os.path.exists('/sys/class/bluetooth/hci0') else 'off'
             sim = 'on' if os.path.exists('/sys/class/net/ppp0') else 'off'
@@ -562,6 +564,24 @@ def shape_window(gw, rects):
     cl.cairo_region_destroy.argtypes = [ctypes.c_void_p]; cl.cairo_region_destroy(reg)
 
 
+def automax():
+    """Maximize every new normal window (finger-friendly: no tiny windows to drag/resize)."""
+    seen = set()
+    while True:
+        time.sleep(1.5)
+        try:
+            ids = [l.split()[0] for l in out('wmctrl -l', 2).splitlines() if len(l.split()) > 1 and l.split()[1] != '-1']
+        except Exception:
+            continue
+        for wid in ids:
+            if wid in seen: continue
+            seen.add(wid)
+            t = out('xprop -id %s _NET_WM_WINDOW_TYPE WM_CLASS' % wid, 2)
+            if 'NORMAL' in t and 'rembley' not in t.lower() and 'Onboard' not in t and 'dunst' not in t.lower():
+                sh('wmctrl -i -r %s -b add,maximized_vert,maximized_horz' % wid)
+        seen &= set(out('wmctrl -l', 2).split())  # forget closed windows
+
+
 def main():
     ui.init_theme()
     sw, sh_ = screen_size()
@@ -572,6 +592,7 @@ def main():
     # control signals (used by rembley-power for the hardware power key)
     GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1, lambda: (power_dialog(None), True)[1])
     GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR2, lambda: (QuickPanel.toggle(sw, sh_, wall, blur), True)[1])
+    if not DEMO: threading.Thread(target=automax, daemon=True).start()
     GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGHUP, lambda: os.execv(sys.executable, [sys.executable] + sys.argv))
     if not os.path.exists(CFG + '/first-run-done') and not DEMO:
         sh('rembley-settings --welcome')
