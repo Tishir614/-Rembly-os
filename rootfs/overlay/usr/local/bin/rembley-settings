@@ -226,6 +226,9 @@ class Settings(Gtk.Window):
                 (mi['MemTotal'] - mi['MemAvailable']) // 1024, mi['MemTotal'] // 1024, (mi['SwapTotal'] - mi['SwapFree']) // 1024,
                 gov, int(fr) // 1000, read('/sys/devices/system/cpu/online', '?'), tz, out('swapon --show 2>/dev/null', 2))); return True
         upd(); GLib.timeout_add_seconds(3, upd)
+        for lab, prof in (('Профиль: экономия батареи', 'eco'), ('Профиль: сбалансированный', 'balanced'), ('Профиль: максимум скорости (следит за температурой)', 'performance')):
+            v.pack_start(btn(lab, lambda p=prof: ui.sh('rembley-profile %s' % p), False), False, False, 4)
+        v.pack_start(btn('Хранилище: где занято место', lambda: ui.sh('rembley-storage'), False), False, False, 4)
         govs = read('/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors', 'interactive').split()
         cb = Gtk.ComboBoxText()
         for g in govs: cb.append(g, g)

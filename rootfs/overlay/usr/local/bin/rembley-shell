@@ -460,7 +460,7 @@ class QuickPanel(Win):
         cls.inst.refresh(); cls.inst.show_all(); cls.inst.present()
 
     def __init__(self, sw, sh_, wall, blur):
-        w, h = 372, 610
+        w, h = 372, 690
         super().__init__(wall, blur, (sw - w - 16, sh_ - BAR - h - 8), type=Gtk.WindowType.TOPLEVEL)
         self.set_decorated(False); self.set_default_size(w, h); self.move(sw - w - 16, sh_ - BAR - h - 8)
         self.set_type_hint(Gdk.WindowTypeHint.DIALOG); self.set_skip_taskbar_hint(True); self.set_keep_above(True)
@@ -483,6 +483,9 @@ class QuickPanel(Win):
                  ('Поворот', ['object-rotate-right', 'view-refresh'], self.rotate),
                  ('Блокировка', ['system-lock-screen', 'lock'], lambda: (self.hide(), sh('rembley-lock'))),
                  ('Настройки', ['preferences-system'], lambda: (self.hide(), sh('rembley-settings'))),
+                 ('Профиль', ['battery-level-60-symbolic', 'battery-good', 'preferences-system-power'], lambda: sh('rembley-profile next')),
+                 ('Хранилище', ['drive-harddisk', 'drive-harddisk-symbolic', 'disk-usage-analyzer'], lambda: (self.hide(), sh('rembley-storage'))),
+                 ('Диспетчер', ['utilities-system-monitor', 'org.xfce.taskmanager'], lambda: (self.hide(), sh('rembley-taskman'))),
                  ('Обновление', ['system-software-update', 'software-update-available', 'view-refresh'], lambda: (self.hide(), sh('rembley-updater'))),
                  ('Оптимизация', ['utilities-system-monitor', 'preferences-system-performance'], lambda: (self.hide(), sh('xfce4-terminal --hold --title=Оптимизация -e "rembley-optimize"'))),
                  ('Язык EN/RU', ['preferences-desktop-locale', 'input-keyboard'], lambda: sh('xdotool key ISO_Next_Group')),
