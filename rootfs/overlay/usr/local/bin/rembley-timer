@@ -17,6 +17,7 @@ def fmt(sec):
 class W(Gtk.Window):
     def __init__(self):
         super().__init__(title='Таймер'); self.set_default_size(720, 520); self.maximize()
+        ui.style_app(self)
         nb = Gtk.Notebook(); self.add(nb)
         # ---- countdown ----
         v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12); v.set_border_width(18)
