@@ -1,0 +1,23 @@
+#!/usr/bin/env python3
+"""rembley-chips - state of every connectivity chip of this tablet and what to do next.
+  rembley-chips            table: Wi-Fi, Bluetooth, GPS, FM, cellular modem (kernel support, device nodes, helpers, firmware -> verdict)
+  rembley-chips --json     same as JSON
+  rembley-chips adapt      match the firmware set to the detected chip (links the right files into /etc/firmware, notes files for other chips)
+States: RUNNING  READY  NEED-DRIVERS  NEED-FIRMWARE  NO-DRIVER-NODE  BLOCKED (the stock kernel itself lacks it: only a kernel rebuild helps)"""
+import json, os, sys
+sys.path[:0] = ['/usr/local/lib/rembley', os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'lib', 'rembley')]
+import rembley_chips as rc
+
+ICON = {'RUNNING': '✔', 'READY': '●', 'NEED-DRIVERS': '↓', 'NEED-FIRMWARE': '↓', 'NO-DRIVER-NODE': '?', 'BLOCKED': '✖'}
+if 'adapt' in sys.argv[1:2]:
+    rc.adapt(); sys.exit(0)
+r = rc.functions(); r.pop('_groups')
+if '--json' in sys.argv: print(json.dumps(r, indent=1, ensure_ascii=False)); sys.exit(0)
+print('Конфигурация ядра: %s' % r['kernel_config_source'])
+print('Опознанные чипы: %s' % (', '.join('%s (%s)' % (k, '; '.join(v[:2])) for k, v in sorted(r['chip_ids'].items())) or 'не определены'))
+print('Узлы: ' + ' '.join('%s=%s' % (k, 'да' if v else 'нет') for k, v in sorted(r['nodes'].items())))
+print('Прошивка по чипам: %s%s' % (r['firmware_groups'], ('  (файлы других чипов не используются: %s)' % ', '.join(r['firmware_other_chips'])) if r['firmware_other_chips'] else ''))
+print()
+for f in r['functions']:
+    print('%s %-14s %-12s %-15s %s' % (ICON.get(f['state'], '?'), f['function'], f['chip'], f['state'], f['why']))
+    if f['fix'] and f['state'] not in ('RUNNING',): print('    → %s' % f['fix'])

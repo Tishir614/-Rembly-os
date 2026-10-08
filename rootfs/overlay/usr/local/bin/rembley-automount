@@ -27,7 +27,10 @@ case $act in
       *)     t=$fs; opts="rw,noatime,nosuid,nodev" ;;
     esac
     if mount -t "$t" -o "$opts" "$dev" "$mp" 2>>/var/log/rembley-automount.log || mount -o ro,nosuid,nodev "$dev" "$mp" 2>>/var/log/rembley-automount.log; then
-      log "mounted $dev ($fs) at $mp"; notify-send "Подключён накопитель" "$(basename "$mp") — открыть в «Файлы»" 2>/dev/null
+      log "mounted $dev ($fs) at $mp"
+      # a firmware copy on this drive? if the chip drivers are still missing, look for them now (once per plug-in)
+      [ -x /system/bin/wmt_launcher ] || { [ -e /run/rembley/drivers-scan ] || { touch /run/rembley/drivers-scan; setsid sh -c '/usr/local/bin/rembley-drivers install --auto >>/var/log/rembley-drivers.log 2>&1; rm -f /run/rembley/drivers-scan' </dev/null >/dev/null 2>&1 & }; }
+      notify-send "Подключён накопитель" "$(basename "$mp") — открыть в «Файлы»" 2>/dev/null
     else log "mount of $dev ($fs) failed"; rmdir "$mp" 2>/dev/null; notify-send "Не удалось подключить накопитель" "$fs: нет драйвера или повреждённая ФС" 2>/dev/null; fi ;;
   remove)
     for m in $(awk -v d="$dev" '$1==d {print $2}' /proc/mounts); do umount -l "$m" 2>/dev/null; rmdir "$m" 2>/dev/null; log "removed $dev from $m"; done ;;

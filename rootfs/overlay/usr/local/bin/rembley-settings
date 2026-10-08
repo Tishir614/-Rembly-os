@@ -189,6 +189,7 @@ class Settings(Gtk.Window):
         self.drv.set_line_wrap(True); v.pack_start(self.drv, False, False, 6)
         v.pack_start(btn('Найти и установить драйверы Wi-Fi автоматически', lambda: ui.sh('xfce4-terminal --hold --title=Драйверы -e "rembley-drivers install"'), False), False, False, 4)
         v.pack_start(btn('Состояние драйверов', lambda: ui.sh('xfce4-terminal --hold --title=Драйверы -e "rembley-drivers status"'), False), False, False, 4)
+        v.pack_start(btn('Чипы: Wi-Fi, Bluetooth, GPS, FM, модем — состояние и подстройка', lambda: ui.sh('xfce4-terminal --hold --title=Чипы -e rembley-chips'), False), False, False, 4)
         v.pack_start(btn('Диагностика Wi-Fi: найти причину и починить', lambda: ui.sh('xfce4-terminal --hold --title=Wi-Fi -e "rembley-net debug"'), False), False, False, 4)
         cc = Gtk.ComboBoxText.new_with_entry()
         for c in ('RU', 'KZ', 'BY', 'UA', 'TR', 'US', 'DE', 'GB', 'FR', 'IT', 'ES', 'PL', 'CN', 'IN'): cc.append_text(c)

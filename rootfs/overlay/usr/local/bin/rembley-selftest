@@ -34,6 +34,14 @@ def checks():
     tp = bool(r)
     if tp and run('pgrep -f "[r]embley-touchd"'): add('Жесты (rembley-touchd)', 'ok', 'работает')
     elif tp: add('Жесты (rembley-touchd)', 'warn', 'не запущен', 'cat /var/log/rembley-touchd.log')
+    # --- connectivity chips (see rembley-chips)
+    try:
+        import json as _j
+        for f in _j.loads(run('rembley-chips --json', 20) or '{}').get('functions', []):
+            stt = f['state']
+            add('Чип: %s (%s)' % (f['function'], f['chip']), 'ok' if stt in ('RUNNING', 'READY') else 'warn', '%s: %s' % (stt, f['why']), f['fix'] if stt not in ('RUNNING',) else '')
+    except Exception as e:
+        add('Чипы связи', 'warn', 'rembley-chips не ответил: %s' % e)
     # --- keyboard
     kb = run('pgrep -f "[o]nboard"')
     add('Экранная клавиатура (Onboard)', 'ok' if kb else 'warn', 'работает' if kb else 'не запущена', '' if kb else 'кнопка клавиатуры в доке запустит её через D-Bus')
