@@ -65,9 +65,12 @@ class Settings(Gtk.Window):
         hb.pack_start(sb, False, False, 0); hb.pack_start(st, True, True, 0)
         for name, title, fn in (('profile', 'Профиль', self.p_profile), ('display', 'Экран и питание', self.p_display), ('sound', 'Звук', self.p_sound),
                                 ('net', 'Сеть', self.p_net), ('time', 'Время и язык', self.p_time), ('perf', 'Производительность', self.p_perf),
-                                ('dev', 'Разработка', self.p_dev), ('about', 'О планшете', self.p_about)):
+                                ('install', 'Установка на планшет', self.p_install), ('dev', 'Разработка', self.p_dev), ('about', 'О планшете', self.p_about)):
             sw = Gtk.ScrolledWindow(); sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC); sw.add(fn()); st.add_titled(sw, name, title)
         self.show_all()
+        if '--page' in sys.argv:
+            try: st.set_visible_child_name(sys.argv[sys.argv.index('--page') + 1])
+            except Exception: pass
 
     # ---------- pages ----------
     def p_profile(self):
@@ -82,6 +85,8 @@ class Settings(Gtk.Window):
         v.pack_start(btn('Сохранить и применить', self.save_profile, False), False, False, 4)
         if WELCOME:
             v.pack_start(btn('1. Подключить Wi-Fi (откроется список сетей)', lambda: ui.sh('rembley-netui wifi'), False), False, False, 4)
+            if not any(l.split()[0].startswith('/dev/mmcblk0p') for l in read('/proc/mounts').splitlines() if len(l.split()) > 1 and l.split()[1] == '/'):
+                v.pack_start(btn('2. Установить на планшет (внутренняя память)', lambda: ui.sh('rembley-settings --page install'), False), False, False, 4)
             v.pack_start(btn('Готово — начать пользоваться', self.finish, False), False, False, 4)
         return v
 
@@ -213,8 +218,66 @@ class Settings(Gtk.Window):
         cb.connect('changed', lambda w: [write_sys(p, w.get_active_id()) for p in glob.glob('/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor')])
         v.pack_start(row('Режим процессора', cb, 'interactive — по умолчанию; performance — максимум скорости; powersave — экономия.'), False, False, 6)
         v.pack_start(btn('Режим экономии вкл/выкл', lambda: ui.sh('rembley-eco toggle'), False), False, False, 4)
+        v.pack_start(btn('Освободить место (кэш, логи, временные файлы)', lambda: ui.sh('xfce4-terminal --hold --title=Очистка -e rembley-clean'), False), False, False, 4)
         v.pack_start(btn('Очистить кэш памяти', lambda: (ui.sh('sync; echo 3 > /proc/sys/vm/drop_caches')), False), False, False, 4)
         return v
+
+    def p_install(self):
+        v = page('Установка на внутреннюю память')
+        rd = ''
+        for l in read('/proc/mounts').splitlines():
+            f = l.split()
+            if len(f) > 1 and f[1] == '/' and f[0].startswith('/dev/'): rd = f[0]
+        part = ''
+        for u in glob.glob('/sys/class/block/*/uevent'):
+            if 'PARTNAME=userdata' in read(u).splitlines(): part = '/dev/' + os.path.basename(os.path.dirname(u))
+        label = ''
+        try:
+            with open(part, 'rb') as f: f.seek(1144); label = f.read(16).rstrip(b'\0').decode('ascii', 'ignore')
+        except Exception: pass
+        internal = bool(part) and rd == part
+        t = ('Сейчас система запущена: %s\nРаздел userdata планшета: %s\nУстановлено во внутреннюю память: %s' % (
+             rd or 'из образа (loop)', part or 'не найден', 'да (запуск идёт с неё)' if internal else ('да (метка REMBLEY)' if label == 'REMBLEY' else 'нет')))
+        l = Gtk.Label(label=t, xalign=0); l.set_line_wrap(True); l.set_selectable(True); v.pack_start(l, False, False, 8)
+        h = Gtk.Label(label=('Установка копирует эту систему во внутренний раздел userdata (он будет ПОЛНОСТЬЮ СТЁРТ и отформатирован). '
+                             'Android (system, vendor, boot), nvram, nvdata, protect и остальные разделы не затрагиваются. '
+                             'Займёт примерно 10–30 минут; не выключайте планшет и держите зарядку.'), xalign=0)
+        h.set_line_wrap(True); h.get_style_context().add_class('small'); v.pack_start(h, False, False, 6)
+        self.ipb = Gtk.ProgressBar(); self.ipb.set_show_text(True); self.ipb.set_text('готово к установке'); v.pack_start(self.ipb, False, False, 8)
+        self.ibtn = btn('Установить во внутреннюю память', self.do_install, False)
+        if internal or not part: self.ibtn.set_sensitive(False); self.ibtn.set_label('Уже во внутренней памяти' if internal else 'Раздел userdata не найден')
+        v.pack_start(self.ibtn, False, False, 6)
+        v.pack_start(btn('Как прошить через fastboot (docs/INSTALL.md)', lambda: ui.sh('xfce4-terminal --hold -e "sh -c \'less /usr/share/rembley/INSTALL.txt 2>/dev/null || echo see docs/INSTALL.md in the repository\'"'), False), False, False, 4)
+        return v
+
+    def do_install(self):
+        d = Gtk.MessageDialog(transient_for=self, modal=True, message_type=Gtk.MessageType.WARNING, buttons=Gtk.ButtonsType.NONE,
+                              text='Установить Rembley во внутреннюю память?')
+        d.format_secondary_text('Раздел userdata будет стёрт. Android и важные разделы не затрагиваются. Нужна зарядка и 10–30 минут.')
+        d.add_button('Отмена', 0); d.add_button('Продолжить', 1); r = d.run(); d.destroy()
+        if r != 1: return
+        d = Gtk.MessageDialog(transient_for=self, modal=True, message_type=Gtk.MessageType.QUESTION, buttons=Gtk.ButtonsType.NONE, text='Точно стереть userdata?')
+        d.format_secondary_text('Последнее подтверждение. Данные раздела userdata будут потеряны безвозвратно.')
+        d.add_button('Нет, отмена', 0); d.add_button('ДА, установить', 1); r = d.run(); d.destroy()
+        if r != 1: return
+        self.ibtn.set_sensitive(False); prog = '/run/rembley/install.progress'
+        try: os.remove(prog)
+        except OSError: pass
+        import subprocess as sp
+        self._ip = sp.Popen(['rembley-install-internal', '--yes', '--progress', prog], stdout=open('/var/log/rembley-install.log', 'w'), stderr=sp.STDOUT, preexec_fn=None)
+        def poll():
+            txt = read(prog)
+            first = txt.splitlines()[0] if txt else '0'
+            if txt.startswith('error:'): self.ipb.set_text('ошибка: ' + txt[6:].strip()); self.ibtn.set_sensitive(True); return False
+            try: pct = int(first)
+            except ValueError: pct = 0
+            self.ipb.set_fraction(min(1.0, pct / 100)); self.ipb.set_text('%d%%' % pct)
+            if 'done' in txt.splitlines()[1:]:
+                self.ipb.set_text('Готово! Rembley установлен. Отключите USB/SD и перезапустите.'); ui.sh('notify-send "Установка завершена" "Rembley установлен во внутреннюю память"'); return False
+            if self._ip.poll() is not None and pct < 100:
+                self.ipb.set_text('Остановлено, см. /var/log/rembley-install.log'); self.ibtn.set_sensitive(True); return False
+            return True
+        GLib.timeout_add_seconds(1, poll)
 
     def p_dev(self):
         v = page('Разработка')

@@ -1,0 +1,14 @@
+#!/bin/sh
+# Free disk space safely: package caches, temp files, thumbnails, old logs. Never touches your files, projects or settings.
+before=$(df -m --output=avail / | tail -1 | tr -d ' ')
+echo "free before: ${before} MB"
+apt-get clean >/dev/null 2>&1; rm -rf /var/cache/apt/archives/*.deb /var/cache/apt/*.bin /var/lib/apt/lists/* 2>/dev/null
+rm -rf /tmp/rembley-* /tmp/*.tmp /var/tmp/* 2>/dev/null
+for d in /root/.cache/thumbnails /root/.cache/pip /root/.cache/mozilla /root/.cache/netsurf /root/.thumbnails /root/.local/share/Trash; do rm -rf "$d" 2>/dev/null; done
+for f in /var/log/*.log /var/log/*.1; do [ -f "$f" ] && : > "$f"; done
+rm -f /root/rembley-report-*.tgz.old 2>/dev/null
+find /root -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null
+sync; echo 3 > /proc/sys/vm/drop_caches 2>/dev/null
+after=$(df -m --output=avail / | tail -1 | tr -d ' ')
+echo "free after:  ${after} MB   (freed $((after - before)) MB)"
+echo "note: package lists were removed; 'rembley-pkg update' (needs network) restores them before the next install."

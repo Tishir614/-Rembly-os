@@ -39,6 +39,7 @@ APPS = [
     ('PDF', ['atril', 'application-pdf'], 'atril'),
     ('Сеть', ['network-wireless', 'preferences-system-network'], 'rembley-netui'),
     ('Диспетчер', ['utilities-system-monitor'], 'xfce4-taskmanager'),
+    ('Таймер', ['preferences-system-time', 'alarm-clock', 'clock'], 'rembley-timer'),
     ('Сенсор', ['input-touchpad', 'preferences-desktop-peripherals', 'input-tablet'], 'rembley-touchtest'),
     ('Настройки', ['preferences-system', 'xfce4-settings-manager'], 'rembley-settings'),
     ('Магазин', ['softwarecenter', 'system-software-install', 'applications-other'], 'rembley-store'),

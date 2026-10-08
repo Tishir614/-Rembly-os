@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6 — установка и свои добавки
+* `tools/flash-rembley.sh` (test / install-recovery / install-boot): проверки устройства, образов и бэкапа, список разрешённых разделов (boot, recovery, userdata), `--dry-run`; `tools/restore-android.sh`
+* `rembley-install-internal` + страница «Установка на планшет»: копирует работающую систему во внутренний userdata одним нажатием, с прогрессом; автоматическое расширение ФС при первом запуске
+* sparse-образ rootfs для быстрой прошивки; `docs/INSTALL.md`
+* Свои добавки: приложение «Таймер» (таймер/секундомер/будильник), «Освободить место» (`rembley-clean`)
+
 ## 0.5 — Linux-программы, скорость, «живой» стол
 * Совместимость: `rembley-pkg` (проверка места), `rembley-install` (.deb/AppImage), `rembley-nosandbox`, `rembley-compat`, ассоциации файлов, окружение для Qt/Java/GL
 * Приложения запускаются с пониженным приоритетом, интерфейс — с повышенным (Xorg/xfwm4/оболочка)

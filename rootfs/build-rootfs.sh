@@ -73,4 +73,6 @@ IMG=$OUT/rembley-rootfs.img
 rm -f "$IMG"; truncate -s "${SIZE}M" "$IMG"
 mke2fs -q -t ext4 -L REMBLEY -d "$R" -F "$IMG"
 du -sh "$R"; ls -lh "$IMG"; sha256sum "$IMG" | tee "$IMG.sha256"
+# sparse copy: fastboot flashes it much faster (only the used blocks are sent)
+if command -v img2simg >/dev/null; then img2simg "$IMG" "$OUT/rembley-rootfs.sparse.img" && ls -lh "$OUT/rembley-rootfs.sparse.img"; else echo "note: img2simg not found (sudo apt install android-sdk-libsparse-utils) -> no sparse image, fastboot will use the raw one"; fi
 echo "Copy to SD/USB as a REMBLEY-labelled ext4 partition, or put on any fs as /rembley-rootfs.img"

@@ -8,6 +8,9 @@ Stock kernel 3.18.79 + appended DTB are untouched. Nothing here flashes the devi
 | 2 | Ubuntu 20.04 armhf rootfs, own PID 1 (no systemd), Rembley desktop, dev tools | `sudo rootfs/build-rootfs.sh` -> `out/rembley-rootfs.img` (3.5 GiB ext4, label `REMBLEY`) |
 | 3 (optional) | Wi-Fi / BT / SIM blobs from your own firmware | `python3 tools/extract_android_blobs.py system.bin vendor.bin` (see `docs/NETWORK.md`) |
 
+## Install (new)
+Three ways, from safest: `tools/flash-rembley.sh test` (nothing written) → install from inside the running system (Settings → Установка на планшет) → automatic fastboot install `tools/flash-rembley.sh install-recovery|install-boot`. Full guide, rollback and what was/was not verified: **`docs/INSTALL.md`**.
+
 ## Run
 1. Charge the tablet. Sanity check: `fastboot boot boot.bin` (stock must start Android).
 2. Put `rembley-rootfs.img` on a USB stick / microSD, either as a partition labelled `REMBLEY` or as a file
