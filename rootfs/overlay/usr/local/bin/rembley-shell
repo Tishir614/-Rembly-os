@@ -8,6 +8,21 @@ import glob, json, math, os, shutil, signal, subprocess, sys, threading, time, u
 sys.path[:0] = ['/usr/local/lib/rembley', os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'lib', 'rembley')]
 import rembleyui as ui
 from rembleyui import *
+try:
+    import rembleyx
+except Exception:
+    rembleyx = None
+_X = None
+
+
+def xconn():
+    """One in-process X connection for the main thread (property reads cost ~0.05 ms; no subprocess polling)."""
+    global _X
+    if _X is None and rembleyx is not None:
+        try: _X = rembleyx.XConn()
+        except Exception: _X = False
+    return _X or None
+
 
 # name, icon names, command
 APPS = [
@@ -24,6 +39,7 @@ APPS = [
     ('PDF', ['atril', 'application-pdf'], 'atril'),
     ('Сеть', ['network-wireless', 'preferences-system-network'], 'rembley-netui'),
     ('Диспетчер', ['utilities-system-monitor'], 'xfce4-taskmanager'),
+    ('Сенсор', ['input-touchpad', 'preferences-desktop-peripherals', 'input-tablet'], 'rembley-touchtest'),
     ('Настройки', ['preferences-system', 'xfce4-settings-manager'], 'rembley-settings'),
     ('Магазин', ['softwarecenter', 'system-software-install', 'applications-other'], 'rembley-store'),
 ]
@@ -107,13 +123,13 @@ class Home(Win):
         s.connect('clicked', lambda _b: self.open_launcher(None)); self.panel_title(box, 'Приложения', s)
         grid = Gtk.Grid(column_homogeneous=True, row_homogeneous=True, row_spacing=2, column_spacing=2)
         for i, (name, ic, cmd) in enumerate(avail_apps()[:12]):
-            grid.attach(self.tile(name, ic, cmd, 46), i % 4, i // 4, 1, 1)
+            grid.attach(self.tile(name, ic, cmd, 50), i % 4, i // 4, 1, 1)
         box.pack_start(grid, True, True, 0)
         self.put(box, 198, 62, 376, 306)
 
     def tile(self, name, ic, cmd, px):
         b = Gtk.Button(); b.set_relief(Gtk.ReliefStyle.NONE); b.get_style_context().add_class('tile')
-        v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4); v.pack_start(icon(ic, px), False, False, 0)
+        v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4); v.pack_start(appicon(ic, px), False, False, 0)
         l = Gtk.Label(label=name); l.set_ellipsize(Pango.EllipsizeMode.END); l.set_max_width_chars(11); v.pack_start(l, False, False, 0)
         b.add(v); b.connect('clicked', lambda _b: sh(cmd)); return b
 
@@ -149,9 +165,10 @@ class Home(Win):
         self.put(box, cx - 170, 14, 340, 120)
 
     def tick(self):
-        t = time.localtime()
-        self.clock.set_text('16:42' if DEMO else time.strftime('%H:%M', t))
-        self.date.set_text('Вс, 13 июля 2025' if DEMO else '%s, %d %s %d' % (RU_DAYS[t.tm_wday], t.tm_mday, RU_MON[t.tm_mon - 1], t.tm_year))
+        t = time.localtime(); hm = '16:42' if DEMO else time.strftime('%H:%M', t)
+        if hm != self.clock.get_text():                           # once a minute, not every second
+            self.clock.set_text(hm)
+            self.date.set_text('Вс, 13 июля 2025' if DEMO else '%s, %d %s %d' % (RU_DAYS[t.tm_wday], t.tm_mday, RU_MON[t.tm_mon - 1], t.tm_year))
         return True
 
     # ---- right column ----
@@ -232,12 +249,22 @@ class Home(Win):
         return True
 
     def music(self):
-        if not have('playerctl') and not DEMO: return True
-        def work():
-            st = out('playerctl status 2>/dev/null')
-            t = out("playerctl metadata --format '{{title}}|{{artist}}' 2>/dev/null") if st else ''
-            GLib.idle_add(self.set_music, st, t)
-        threading.Thread(target=work, daemon=True).start(); return True
+        """Now playing straight from MPRIS over D-Bus (in-process, no playerctl spawn)."""
+        if DEMO: self.set_music('Playing', 'x'); return True
+        try:
+            bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+            names = bus.call_sync('org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus', 'ListNames', None, None, Gio.DBusCallFlags.NONE, 500, None).unpack()[0]
+            players = [n for n in names if n.startswith('org.mpris.MediaPlayer2.')]
+            if not players: self.set_music('', ''); return True
+            def get(prop):
+                return bus.call_sync(players[0], '/org/mpris/MediaPlayer2', 'org.freedesktop.DBus.Properties', 'Get',
+                                     GLib.Variant('(ss)', ('org.mpris.MediaPlayer2.Player', prop)), None, Gio.DBusCallFlags.NONE, 500, None).unpack()[0]
+            md = get('Metadata'); st = get('PlaybackStatus')
+            title = md.get('xesam:title', ''); artist = md.get('xesam:artist', [''])
+            self.set_music(st, '%s|%s' % (title, artist[0] if isinstance(artist, list) and artist else artist))
+        except Exception:
+            self.set_music('', '')
+        return True
 
     def set_music(self, st, t):
         if DEMO: st, t = 'Playing', 'lofi anime radio|chill • study • relax'
@@ -297,7 +324,7 @@ class Launcher(Win):
             b = Gtk.Button(); b.set_relief(Gtk.ReliefStyle.NONE); b.get_style_context().add_class('tile')
             v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
             ic = a.get_icon(); n = ic.get_names()[0] if isinstance(ic, Gio.ThemedIcon) else 'application-x-executable'
-            v.pack_start(icon(n, 48), False, False, 0)
+            v.pack_start(appicon(n, 52), False, False, 0)
             l = Gtk.Label(label=a.get_name()); l.set_ellipsize(Pango.EllipsizeMode.END); l.set_max_width_chars(13); v.pack_start(l, False, False, 0)
             b.add(v); b.connect('clicked', lambda _b, app=a: (app.launch([], None), self.close_()))
             self.fb.add(b)
@@ -431,7 +458,7 @@ class Switcher(Win):
             n += 1
             card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6); card.set_border_width(8)
             b = Gtk.Button(); b.set_relief(Gtk.ReliefStyle.NONE); b.get_style_context().add_class('tile')
-            v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6); v.pack_start(icon([cls, cls.replace('xfce4-', ''), 'application-x-executable'], 64), False, False, 0)
+            v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6); v.pack_start(appicon([cls, cls.replace('xfce4-', ''), 'application-x-executable'], 72), False, False, 0)
             l = Gtk.Label(label=title); l.set_ellipsize(Pango.EllipsizeMode.END); l.set_max_width_chars(22); v.pack_start(l, False, False, 0)
             b.add(v); b.connect('clicked', lambda _b, i=wid: (sh('wmctrl -ia %s' % i), self.hide()))
             x = Gtk.Button(label='Закрыть'); x.set_relief(Gtk.ReliefStyle.NONE); x.connect('clicked', lambda _b, i=wid: (sh('wmctrl -ic %s' % i), GLib.timeout_add(500, lambda: (self.fill(), self.show_all(), False)[2])))
@@ -471,13 +498,13 @@ class Bar(Win):
         ha = Gtk.Button(); ha.set_relief(Gtk.ReliefStyle.NONE); ha.get_style_context().add_class('dockbtn'); ha.add(Avatar(38))
         ha.connect('clicked', lambda _b: sh('wmctrl -k on')); p.pack_start(ha, False, False, 0)
         for _, ic, cmd in items:
-            b = Gtk.Button(); b.set_relief(Gtk.ReliefStyle.NONE); b.get_style_context().add_class('dockbtn'); b.add(icon(ic, 38))
+            b = Gtk.Button(); b.set_relief(Gtk.ReliefStyle.NONE); b.get_style_context().add_class('dockbtn'); b.add(appicon(ic, 44))
             b.connect('clicked', lambda _b, c=cmd: sh(c)); p.pack_start(b, False, False, 0)
         wb = Gtk.Button(); wb.set_relief(Gtk.ReliefStyle.NONE); wb.get_style_context().add_class('dockbtn')
-        wb.add(icon(['preferences-system-windows', 'window-duplicate', 'view-grid'], 38))
+        wb.add(appicon(['preferences-system-windows', 'window-duplicate', 'view-grid'], 44))
         wb.connect('clicked', lambda _b: Switcher.toggle(self.sw, self.sh - BAR, self.wall, self.blur)); p.pack_start(wb, False, False, 0)
         kb = Gtk.Button(); kb.set_relief(Gtk.ReliefStyle.NONE); kb.get_style_context().add_class('dockbtn')
-        kb.add(icon(['input-keyboard', 'keyboard'], 38))
+        kb.add(appicon(['input-keyboard', 'keyboard'], 44))
         kb.connect('clicked', lambda _b: sh('dbus-send --type=method_call --dest=org.onboard.Onboard /org/onboard/Onboard/Keyboard org.onboard.Onboard.Keyboard.ToggleVisible'))
         p.pack_start(kb, False, False, 0)
 
@@ -499,7 +526,9 @@ class Bar(Win):
             wl = ''
             try:
                 wl = open('/sys/class/net/wlan0/operstate').read().strip()
-                if wl == 'up' and 'Connected' not in out('iw dev wlan0 link 2>/dev/null', 2): wl = 'down'   # up but not associated
+                if wl == 'up':                                    # up but not associated -> link quality 0 in /proc/net/wireless
+                    q = [l.split() for l in open('/proc/net/wireless').read().splitlines()[2:] if l.strip().startswith('wlan0')]
+                    if not q or float(q[0][2].rstrip('.')) <= 0: wl = 'down'
             except Exception: pass
             btm = 'on' if os.path.exists('/sys/class/bluetooth/hci0') else 'off'
             sim = 'on' if os.path.exists('/sys/class/net/ppp0') else 'off'
@@ -523,7 +552,9 @@ class Bar(Win):
         t = time.localtime(); self.tc.set_text('16:42' if DEMO else time.strftime('%H:%M', t))
 
     def cur_ws(self):
-        cur = out("wmctrl -d | awk '$2==\"*\"{print $1}'", 1)
+        x = xconn(); cur = str(x.current_desktop()) if x else out("wmctrl -d | awk '$2==\"*\"{print $1}'", 1)
+        if cur == getattr(self, '_ws_cur', None): return True
+        self._ws_cur = cur
         for i, b in enumerate(self.wsb):
             ctx = b.get_style_context()
             (ctx.add_class if cur == str(i) or (DEMO and i == 0) else ctx.remove_class)('cur')
@@ -564,22 +595,73 @@ def shape_window(gw, rects):
     cl.cairo_region_destroy.argtypes = [ctypes.c_void_p]; cl.cairo_region_destroy(reg)
 
 
-def automax():
-    """Maximize every new normal window (finger-friendly: no tiny windows to drag/resize)."""
+def automax_start():
+    """Maximize every new normal window (finger-friendly: no tiny windows to drag/resize).
+    Watches _NET_CLIENT_LIST in-process; spawns wmctrl/xprop only for a window that just appeared."""
     seen = set()
-    while True:
-        time.sleep(1.5)
-        try:
-            ids = [l.split()[0] for l in out('wmctrl -l', 2).splitlines() if len(l.split()) > 1 and l.split()[1] != '-1']
-        except Exception:
-            continue
-        for wid in ids:
-            if wid in seen: continue
-            seen.add(wid)
-            t = out('xprop -id %s _NET_WM_WINDOW_TYPE WM_CLASS' % wid, 2)
-            if 'NORMAL' in t and 'rembley' not in t.lower() and 'Onboard' not in t and 'dunst' not in t.lower():
-                sh('wmctrl -i -r %s -b add,maximized_vert,maximized_horz' % wid)
-        seen &= set(out('wmctrl -l', 2).split())  # forget closed windows
+
+    def check():
+        x = xconn()
+        if x is None: return True
+        ids = set(x.clients())
+        for wid in ids - seen:
+            types = x.window_types(wid)
+            if '_NET_WM_WINDOW_TYPE_NORMAL' in types or not types:
+                cls = out('xprop -id %d WM_CLASS' % wid, 2).lower()
+                if not any(k in cls for k in ('rembley', 'onboard', 'dunst', 'xfce4-notifyd')):
+                    sh('wmctrl -i -r 0x%x -b add,maximized_vert,maximized_horz' % wid)
+        seen.clear(); seen.update(ids)
+        return True
+    GLib.timeout_add(1500, check)
+
+
+def round_rects(w, h, r):
+    rects = []
+    for yy in range(h):
+        e = r - yy - .5 if yy < r else (yy - (h - r) + .5 if yy >= h - r else None)
+        d = 0 if e is None else r - math.sqrt(max(0, r * r - e * e))
+        rects.append((int(d), yy, max(1, int(w - 2 * d)), 1))
+    return rects
+
+
+class Fab(Gtk.Window):
+    """Floating keyboard button on the right edge: apps without accessibility (terminal) never auto-show the keyboard."""
+    def __init__(self, sw, sh_):
+        super().__init__(type=Gtk.WindowType.TOPLEVEL)
+        S = 60
+        self.set_type_hint(Gdk.WindowTypeHint.DOCK); self.set_decorated(False); self.set_keep_above(True)
+        self.set_default_size(S, S); self.move(sw - S - 6, int(sh_ * 0.40)); self.get_style_context().add_class('rl-win')
+        b = Gtk.Button(); b.set_relief(Gtk.ReliefStyle.NONE); b.get_style_context().add_class('dockbtn'); b.add(appicon(['input-keyboard', 'keyboard'], 52))
+        b.connect('clicked', lambda _b: ctl_cmd('keyboard')); self.add(b)
+        self.connect('realize', lambda *_: shape_window(self.get_window(), round_rects(S, S, 18)))
+
+
+def ctl_cmd(cmd, ctx=None):
+    """Commands from rembley-touchd (edge swipes) or `echo cmd > /run/rembley/ctl`."""
+    c = ctx or ctl_cmd.ctx
+    if cmd == 'quick': QuickPanel.toggle(c['sw'], c['sh'], c['wall'], c['blur'])
+    elif cmd == 'launcher': c['home'].open_launcher(None)
+    elif cmd == 'switcher': Switcher.toggle(c['sw'], c['sh'] - BAR, c['wall'], c['blur'])
+    elif cmd == 'power': power_dialog(None)
+    elif cmd == 'home': sh('wmctrl -k on')
+    elif cmd == 'keyboard': sh('dbus-send --type=method_call --dest=org.onboard.Onboard /org/onboard/Onboard/Keyboard org.onboard.Onboard.Keyboard.ToggleVisible')
+
+
+def ctl_listen():
+    path = '/run/rembley/ctl'
+    try:
+        os.makedirs('/run/rembley', exist_ok=True)
+        if os.path.exists(path): os.remove(path)
+        os.mkfifo(path, 0o660)
+        rfd = os.open(path, os.O_RDONLY | os.O_NONBLOCK); ctl_listen.wfd = os.open(path, os.O_WRONLY | os.O_NONBLOCK)   # 2nd end keeps the FIFO from hitting EOF
+    except OSError:
+        return
+    def cb(fd, cond):
+        for line in os.read(fd, 4096).decode('utf8', 'replace').split():
+            try: ctl_cmd(line)
+            except Exception as e: print('ctl error', line, e, file=sys.stderr)
+        return True
+    GLib.io_add_watch(rfd, GLib.PRIORITY_DEFAULT, GLib.IOCondition.IN, cb)
 
 
 def main():
@@ -588,11 +670,13 @@ def main():
     wall, blur = load_wallpaper(sw, sh_)
     home = Home(sw, sh_, wall, blur); bar = Bar(sw, sh_, wall, blur)
     home.show_all(); bar.show_all()
+    fab = Fab(sw, sh_); fab.show_all()
+    ctl_cmd.ctx = {'sw': sw, 'sh': sh_, 'wall': wall, 'blur': blur, 'home': home}; ctl_listen()
     home.get_window().lower()
     # control signals (used by rembley-power for the hardware power key)
     GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1, lambda: (power_dialog(None), True)[1])
     GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR2, lambda: (QuickPanel.toggle(sw, sh_, wall, blur), True)[1])
-    if not DEMO: threading.Thread(target=automax, daemon=True).start()
+    if not DEMO: automax_start()
     GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGHUP, lambda: os.execv(sys.executable, [sys.executable] + sys.argv))
     if not os.path.exists(CFG + '/first-run-done') and not DEMO:
         sh('rembley-settings --welcome')

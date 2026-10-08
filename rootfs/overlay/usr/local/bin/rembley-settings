@@ -106,12 +106,17 @@ class Settings(Gtk.Window):
             self.rot.append(k, t)
         self.rot.set_active_id(cur if cur in ('CW', 'CCW', 'none', 'UD') else 'CW')
         v.pack_start(row('Ориентация', self.rot, 'Меняется ориентация экрана и сенсора сразу (экран перезапустится).'), False, False, 0)
+        v.pack_start(btn('Проверка сенсора (4 мишени)', lambda: ui.sh('rembley-touchtest'), False), False, False, 4)
         v.pack_start(btn('Применить ориентацию', lambda: ui.sh('rembley-rotate ' + self.rot.get_active_id().lower()), False), False, False, 4)
         self.dpi = Gtk.ComboBoxText()
         for k, t in (('110', 'Мелко (110)'), ('140', 'Обычно (140)'), ('170', 'Крупно (170)'), ('200', 'Очень крупно (200)')): self.dpi.append(k, t)
         self.dpi.set_active_id(kv_get(RE + '/display.conf', 'DPI', '140') if kv_get(RE + '/display.conf', 'DPI', '140') in ('110', '140', '170', '200') else '140')
         v.pack_start(row('Размер интерфейса', self.dpi, 'Применится после перезапуска экрана.'), False, False, 0)
         v.pack_start(btn('Применить размер', lambda: (kv_set(RE + '/display.conf', 'DPI', self.dpi.get_active_id()), ui.sh('pkill -x Xorg')), False), False, False, 4)
+        self.icons = Gtk.ComboBoxText(); self.icons.append('tiles', 'Современные плитки'); self.icons.append('flat', 'Плоские значки')
+        self.icons.set_active_id('flat' if read(CFG + '/icons') == 'flat' else 'tiles')
+        v.pack_start(row('Стиль иконок', self.icons, 'Цветные стеклянные плитки или обычные значки. Применится после перезапуска рабочего стола.'), False, False, 0)
+        v.pack_start(btn('Применить стиль иконок', lambda: (os.makedirs(CFG, exist_ok=True), open(CFG + '/icons', 'w').write(self.icons.get_active_id()), ui.sh('rembley-restart-shell')), False), False, False, 4)
         fc = Gtk.FileChooserButton(title='Обои', action=Gtk.FileChooserAction.OPEN); f = Gtk.FileFilter(); f.set_name('Изображения'); f.add_mime_type('image/*'); fc.add_filter(f)
         fc.connect('file-set', lambda w: self.set_wall(w.get_filename()))
         v.pack_start(row('Обои', fc, 'Фон «стекла» подстроится автоматически. Рекомендуется 1280×800.'), False, False, 0)
@@ -228,6 +233,8 @@ class Settings(Gtk.Window):
 
     def p_about(self):
         v = page('О планшете')
+        try: v.pack_start(Gtk.Image.new_from_pixbuf(GdkPixbuf.Pixbuf.new_from_file_at_size(os.path.join(SHARE, 'logo-small.png'), 260, 260)), False, False, 4)
+        except Exception: pass
         mi = {l.split(':')[0]: int(l.split()[1]) for l in open('/proc/meminfo') if ':' in l}
         st = os.statvfs('/')
         t = '%s\nЯдро: %s\nПлата: A73 / K37MV1_BSP, MT6737M (Cortex-A53)\nОЗУ: %d МБ\nКорень: %.1f / %.1f ГБ\nUptime: %s\nIP: %s\nПоворот: %s' % (

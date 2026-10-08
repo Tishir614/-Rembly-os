@@ -63,7 +63,20 @@ def shell_signal(sig):
         except Exception: pass
 
 
+_XC = None
+
+
 def idle_s():
+    """Seconds since the last touch/key. In-process XScreenSaver query (no xprintidle spawn every 2 s)."""
+    global _XC
+    try:
+        if _XC is None:
+            sys.path[:0] = ['/usr/local/lib/rembley', os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'lib', 'rembley')]
+            import rembleyx; _XC = rembleyx.XConn()
+        v = _XC.idle_ms()
+        if v is not None: return v / 1000
+    except Exception:
+        _XC = None
     v = run('xprintidle', 2)
     return int(v) / 1000 if v.isdigit() else 0
 
@@ -105,7 +118,12 @@ def battery_loop():
                 if open(d + '/type').read().strip() != 'Battery': continue
                 cap = int(open(d + '/capacity').read()); st = open(d + '/status').read().strip()
             except Exception: continue
-            if st == 'Charging' or st == 'Full': warned.clear(); continue
+            if st == 'Charging' or st == 'Full':
+                warned.clear()
+                if os.path.exists(STATE + '/eco-auto'): os.remove(STATE + '/eco-auto'); run('rembley-eco off')   # power is back: leave auto-saver
+                continue
+            if cap <= 20 and not os.path.exists(STATE + '/eco') :                                              # auto battery saver
+                open(STATE + '/eco-auto', 'w').close(); run('rembley-eco on')
             for lim, msg in ((15, 'Низкий заряд: %d%%'), (5, 'Критический заряд: %d%%! Подключите зарядку')):
                 if cap <= lim and lim not in warned:
                     warned.add(lim); run('notify-send -u critical "Батарея" "%s"' % (msg % cap))

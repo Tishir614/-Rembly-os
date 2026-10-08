@@ -8,7 +8,7 @@ import glob, json, math, os, shutil, subprocess, sys, threading, time, urllib.re
 
 import gi
 gi.require_version('Gtk', '3.0'); gi.require_version('Gdk', '3.0')
-from gi.repository import Gtk, Gdk, GLib, Gio, Pango
+from gi.repository import Gtk, Gdk, GLib, Gio, Pango, GdkPixbuf
 try:
     gi.require_version('GdkX11', '3.0'); from gi.repository import GdkX11
 except Exception:
@@ -146,6 +146,60 @@ def icon(names, px):
     return Gtk.Image.new_from_icon_name('application-x-executable', Gtk.IconSize.DIALOG)
 
 
+_TILES = {}
+
+
+def _dominant_hue(pb):
+    """(hue, saturation) of the most colourful part of an icon pixbuf; greys fall back to a violet accent."""
+    import colorsys
+    sm = pb.scale_simple(12, 12, GdkPixbuf.InterpType.BILINEAR); px, n, rs = sm.get_pixels(), sm.get_n_channels(), sm.get_rowstride()
+    best, w_tot, hs, ss = 0, 0, 0.0, 0.0
+    for y in range(12):
+        for x in range(12):
+            o = y * rs + x * n; r, g, b = px[o] / 255, px[o + 1] / 255, px[o + 2] / 255; a = px[o + 3] / 255 if n == 4 else 1
+            h, sat, v = colorsys.rgb_to_hsv(r, g, b); wgt = a * sat * v
+            if wgt > 0.02: hs += h * wgt; ss += sat * wgt; w_tot += wgt
+    if w_tot < 0.3: return 0.74, 0.5                                   # neutral icon -> violet tile (matches the OS accent)
+    return hs / w_tot, min(1.0, ss / w_tot)
+
+
+def tile_icon(names, px):
+    """Modern app icon: rounded 'squircle' glass tile tinted from the icon's own colour, soft highlight, thin rim."""
+    import colorsys
+    names = [names] if isinstance(names, str) else names
+    key = (tuple(names), px)
+    if key in _TILES: return Gtk.Image.new_from_surface(_TILES[key])
+    pb = None
+    for n in names:
+        try:
+            if THEME.has_icon(n): pb = THEME.load_icon(n, int(px * 0.62), Gtk.IconLookupFlags.FORCE_SIZE); break
+        except Exception: pass
+    if pb is None: return icon(names, px)
+    h, sat = _dominant_hue(pb)
+    sf = cairo.ImageSurface(cairo.FORMAT_ARGB32, px, px); cr = cairo.Context(sf)
+    r = px * 0.27
+    top = colorsys.hsv_to_rgb(h, min(0.75, 0.35 + sat * 0.4), 0.46); bot = colorsys.hsv_to_rgb(h, min(0.85, 0.45 + sat * 0.4), 0.17)
+    g = cairo.LinearGradient(0, 0, 0, px); g.add_color_stop_rgb(0, *top); g.add_color_stop_rgb(1, *bot)
+    rrect(cr, 1, 1, px - 2, px - 2, r); cr.set_source(g); cr.fill_preserve(); cr.save(); cr.clip()
+    hl = cairo.LinearGradient(0, 0, 0, px * 0.55); hl.add_color_stop_rgba(0, 1, 1, 1, 0.20); hl.add_color_stop_rgba(1, 1, 1, 1, 0.0)
+    cr.set_source(hl); cr.rectangle(0, 0, px, px * 0.55); cr.fill()                                  # glossy top highlight
+    glow = cairo.RadialGradient(px / 2, px * 1.05, px * 0.05, px / 2, px * 1.05, px * 0.7)
+    glow.add_color_stop_rgba(0, *colorsys.hsv_to_rgb(h, 0.6, 1.0), 0.28); glow.add_color_stop_rgba(1, 0, 0, 0, 0)
+    cr.set_source(glow); cr.paint(); cr.restore()                                                    # coloured glow from below
+    rrect(cr, 1, 1, px - 2, px - 2, r); cr.set_source_rgba(1, 1, 1, 0.20); cr.set_line_width(1.2); cr.stroke()   # rim
+    off = (px - pb.get_width()) / 2
+    Gdk.cairo_set_source_pixbuf(cr, pb, off, off - px * 0.01); cr.paint()
+    _TILES[key] = sf
+    return Gtk.Image.new_from_surface(sf)
+
+
+def appicon(names, px):
+    """Icon for apps: modern tiles by default; ~/.config/rembley/icons containing 'flat' switches to plain icons."""
+    try: flat = open(CFG + '/icons').read().strip() == 'flat'
+    except OSError: flat = False
+    return icon(names, px) if flat else tile_icon(names, px)
+
+
 def sh(cmd):
     try:
         subprocess.Popen(cmd, shell=True, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -190,23 +244,28 @@ class Gauge(Gtk.DrawingArea):
 
 
 class Avatar(Gtk.DrawingArea):
+    """Round avatar: the fox from the Rembley logo (usr/share/rembley/avatar.png), vector cat as fallback."""
+    _pb = {}
+
     def __init__(self, size=52):
-        super().__init__(); self.set_size_request(size, size)
+        super().__init__(); self.size = size; self.set_size_request(size, size)
+        key = size
+        if key not in Avatar._pb:
+            try: Avatar._pb[key] = GdkPixbuf.Pixbuf.new_from_file_at_size(os.path.join(SHARE, 'avatar.png'), size - 4, size - 4)
+            except Exception: Avatar._pb[key] = None
+        self.pb = Avatar._pb[key]
 
     def do_draw(self, cr):
         w, h = self.get_allocated_width(), self.get_allocated_height(); r = min(w, h) / 2 - 2
+        if self.pb is not None:
+            cr.set_source_rgba(0.72, 0.62, 1.0, 0.55); cr.arc(w / 2, h / 2, r + 1, 0, 2 * math.pi); cr.set_line_width(1.6); cr.stroke()
+            Gdk.cairo_set_source_pixbuf(cr, self.pb, (w - self.pb.get_width()) / 2, (h - self.pb.get_height()) / 2); cr.paint(); return
         cx, cy = w / 2, h / 2 + 3
         g = cairo.LinearGradient(0, 0, w, h); g.add_color_stop_rgb(0, .85, .8, 1); g.add_color_stop_rgb(1, .55, .5, .9)
         cr.set_source(g); cr.arc(w / 2, h / 2, r, 0, 2 * math.pi); cr.fill()
-        cr.set_source_rgb(.98, .97, 1)                       # cat head
-        cr.arc(cx, cy, r * .62, 0, 2 * math.pi); cr.fill()
-        for s in (-1, 1):
-            cr.move_to(cx + s * r * .62, cy - r * .1); cr.line_to(cx + s * r * .5, cy - r * .85); cr.line_to(cx + s * r * .1, cy - r * .5); cr.close_path(); cr.fill()
-        cr.set_source_rgb(.3, .2, .55)
-        for s in (-1, 1):
-            cr.arc(cx + s * r * .25, cy, r * .07, 0, 2 * math.pi); cr.fill()
-
-
+        cr.set_source_rgb(.98, .97, 1); cr.arc(cx, cy, r * .62, 0, 2 * math.pi); cr.fill()
+        for sgn in (-1, 1):
+            cr.move_to(cx + sgn * r * .62, cy - r * .1); cr.line_to(cx + sgn * r * .5, cy - r * .85); cr.line_to(cx + sgn * r * .1, cy - r * .5); cr.close_path(); cr.fill()
 
 
 def init_theme():

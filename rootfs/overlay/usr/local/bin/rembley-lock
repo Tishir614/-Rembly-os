@@ -35,6 +35,10 @@ class Lock(Win):
         panel = Glass(orientation=Gtk.Orientation.VERTICAL, radius=30, tint=(0.06, 0.05, 0.14, 0.82), halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
         panel.set_border_width(28); self.add(panel)
         c = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, halign=Gtk.Align.CENTER); panel.pack_start(c, True, True, 0)
+        try:
+            lg = GdkPixbuf.Pixbuf.new_from_file_at_size(os.path.join(SHARE, 'logo-small.png'), 220, 220)
+            c.pack_start(Gtk.Image.new_from_pixbuf(lg), False, False, 0)
+        except Exception: pass
         self.clock = Gtk.Label(); self.clock.get_style_context().add_class('clock'); c.pack_start(self.clock, False, False, 0)
         self.date = Gtk.Label(); self.date.get_style_context().add_class('date'); c.pack_start(self.date, False, False, 0)
         self.msg = Gtk.Label(label='Введите PIN' if self.salt_hash else ''); self.msg.get_style_context().add_class('small'); c.pack_start(self.msg, False, False, 8)

@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+"""Touch test: tap the 4 corner targets and draw with your finger. If the dot lands away from your finger, the touch
+rotation does not match the screen: press 'Повернуть' (cycles rotation of screen+touch and restarts the display)."""
+import math, os, sys, time
+sys.path[:0] = ['/usr/local/lib/rembley', os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'lib', 'rembley')]
+import rembleyui as ui
+from rembleyui import *
+
+
+class Canvas(Gtk.DrawingArea):
+    def __init__(self):
+        super().__init__(); self.trail = []; self.hit = [False] * 4; self.last = None; self.taps = 0
+        self.add_events(Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.BUTTON_RELEASE_MASK | Gdk.EventMask.POINTER_MOTION_MASK |
+                        Gdk.EventMask.BUTTON1_MOTION_MASK | Gdk.EventMask.TOUCH_MASK)
+        self.connect('button-press-event', self.press); self.connect('motion-notify-event', self.move); self.connect('touch-event', self.touch)
+
+    def targets(self):
+        w, h = self.get_allocated_width(), self.get_allocated_height(); m = 90
+        return [(m, m), (w - m, m), (w - m, h - m), (m, h - m)]
+
+    def press(self, _w, e): self.pt(e.x, e.y, True); return True
+    def move(self, _w, e):
+        if e.state & Gdk.ModifierType.BUTTON1_MASK: self.pt(e.x, e.y, False)
+        return True
+    def touch(self, _w, e):
+        if e.type in (Gdk.EventType.TOUCH_BEGIN, Gdk.EventType.TOUCH_UPDATE): self.pt(e.x, e.y, e.type == Gdk.EventType.TOUCH_BEGIN)
+        return True
+
+    def pt(self, x, y, tap):
+        self.last = (x, y); self.trail = (self.trail + ([None] if tap else []) + [(x, y)])[-300:]       # None = pen lift
+        if tap:
+            self.taps += 1
+            for i, (tx, ty) in enumerate(self.targets()):
+                if math.hypot(x - tx, y - ty) < 70: self.hit[i] = True
+        self.queue_draw()
+
+    def do_draw(self, cr):
+        w, h = self.get_allocated_width(), self.get_allocated_height()
+        cr.set_source_rgb(0.05, 0.04, 0.12); cr.paint()
+        cr.set_source_rgba(1, 1, 1, 0.07); cr.set_line_width(1)
+        for x in range(0, w, 100): cr.move_to(x, 0); cr.line_to(x, h)
+        for y in range(0, h, 100): cr.move_to(0, y); cr.line_to(w, y)
+        cr.stroke()
+        for i, (tx, ty) in enumerate(self.targets()):
+            cr.set_source_rgba(*((0.3, 1, 0.5, 0.9) if self.hit[i] else (0.75, 0.6, 1, 0.9))); cr.set_line_width(5)
+            cr.arc(tx, ty, 54, 0, 2 * math.pi); cr.stroke(); cr.arc(tx, ty, 10, 0, 2 * math.pi); cr.fill()
+        if len(self.trail) > 1:
+            cr.set_source_rgba(0.9, 0.6, 1, 0.8); cr.set_line_width(6); cr.set_line_join(cairo.LINE_JOIN_ROUND); cr.set_line_cap(cairo.LINE_CAP_ROUND)
+            pen = False
+            for p in self.trail:
+                if p is None: pen = False; continue
+                (cr.line_to if pen else cr.move_to)(*p); pen = True
+            cr.stroke()
+        if self.last:
+            cr.set_source_rgba(1, 1, 1, 0.95); cr.arc(*self.last, 16, 0, 2 * math.pi); cr.fill()
+        cr.set_source_rgb(0.93, 0.9, 1); cr.select_font_face('Noto Sans', 0, 1); cr.set_font_size(26)
+        ok = all(self.hit)
+        lines = ['Проверка сенсора: коснитесь 4 мишеней в углах, потом порисуйте.',
+                 'Сенсор в порядке!' if ok else 'Точка должна быть ТОЧНО под пальцем. Если смещена/зеркальна — «Повернуть».',
+                 'Касаний: %d   Позиция: %s' % (self.taps, '%d, %d' % self.last if self.last else '—')]
+        for i, t in enumerate(lines): cr.move_to(150, 150 + i * 40); cr.show_text(t)
+
+
+class W(Gtk.Window):
+    def __init__(self):
+        super().__init__(title='Проверка сенсора'); self.maximize()
+        ov = Gtk.Overlay(); self.add(ov); self.cv = Canvas(); ov.add(self.cv)
+        bx = Gtk.Box(spacing=16, halign=Gtk.Align.CENTER, valign=Gtk.Align.END); bx.set_margin_bottom(40)
+        for t, f in (('Повернуть', lambda: ui.sh('rembley-rotate $(cat /etc/rembley/display.conf 2>/dev/null | grep -q ROTATE=CW && echo ccw || echo cw)')),
+                     ('Сбросить', self.reset), ('Закрыть', Gtk.main_quit)):
+            b = Gtk.Button(label=t); b.set_size_request(220, 64); b.connect('clicked', lambda _b, f=f: f()); bx.pack_start(b, False, False, 0)
+        ov.add_overlay(bx); self.show_all()
+
+    def reset(self):
+        self.cv.trail = []; self.cv.hit = [False] * 4; self.cv.last = None; self.cv.taps = 0; self.cv.queue_draw()
+
+
+if __name__ == '__main__':
+    ui.init_theme(); W().connect('destroy', Gtk.main_quit); Gtk.main()
