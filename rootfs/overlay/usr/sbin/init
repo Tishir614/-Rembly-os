@@ -23,14 +23,26 @@ mkdir -p /dev/graphics /dev/input
 [ -e /dev/tty1 ] || mknod -m 620 /dev/tty1 c 4 1
 ln -sf /proc/self/fd /dev/fd; ln -sf /proc/self/fd/0 /dev/stdin
 ln -sf /proc/self/fd/1 /dev/stdout; ln -sf /proc/self/fd/2 /dev/stderr
+# ---- boot progress bar: refills the track that stage 1 drew on the splash (800x1280 raw framebuffer; skipped if the format differs) ----
+BAR=0; BPP=$(cat /sys/class/graphics/fb0/bits_per_pixel 2>/dev/null); STRIDE=$(cat /sys/class/graphics/fb0/stride 2>/dev/null)
+BROW=$(cat /usr/share/rembley/boot/row 2>/dev/null)
+bootbar() {   # bootbar N  (0..8)
+  [ -n "$BPP" ] && [ "$STRIDE" = "$((800 * BPP / 8))" ] && [ -n "$BROW" ] && [ -w /dev/fb0 ] && [ -f /usr/share/rembley/boot/bar-$1.$BPP.gz ] || return 0
+  $BB gunzip -c /usr/share/rembley/boot/bar-$1.$BPP.gz | $BB dd of=/dev/fb0 bs="$STRIDE" seek="$BROW" conv=notrunc 2>/dev/null
+}
+bootbar 1
 hostname "$(cat /etc/hostname 2>/dev/null || echo rembley)"
 ip link set lo up 2>/dev/null
-for t in /etc/rembley/rc.d/*.sh; do [ -x "$t" ] && "$t" 2>&1 | while read l; do say "$l"; done; done
+for t in /etc/rembley/rc.d/*.sh; do
+  [ -x "$t" ] && "$t" 2>&1 | while read l; do say "$l"; done
+  BAR=$((BAR + 1)); [ $BAR -gt 6 ] && BAR=6; bootbar $((BAR + 1))
+done
 
 [ -e /run/dbus/pid ] && rm -f /run/dbus/pid
 mkdir -p /var/lib/dbus; dbus-uuidgen --ensure 2>/dev/null
 dbus-daemon --system --fork 2>/dev/null
 
+bootbar 8
 say "Rembley OS up. Starting graphical session (touch: $(rembley-touchprobe 2>/dev/null || echo not found))"
 # Supervisor: respawn the session; if X dies repeatedly fall back to a console shell.
 fails=0

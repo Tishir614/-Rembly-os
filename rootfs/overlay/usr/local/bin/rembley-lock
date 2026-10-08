@@ -26,31 +26,60 @@ RU_DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
 RU_MON = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря']
 
 
+class Dots(Gtk.DrawingArea):
+    """PIN progress as circles: filled = digit typed; shakes sideways on a wrong PIN."""
+    def __init__(self):
+        super().__init__(); self.n = 0; self.err = False; self.off = 0; self.set_size_request(300, 36)
+
+    def set(self, n, err=False):
+        self.n, self.err = n, err; self.queue_draw()
+
+    def shake(self):
+        seq = [-14, 14, -10, 10, -6, 6, -2, 2, 0]
+        def step(i):
+            if i >= len(seq): self.off = 0; self.set(0); return False
+            self.off = seq[i]; self.queue_draw(); GLib.timeout_add(45, step, i + 1); return False
+        self.err = True; step(0)
+
+    def do_draw(self, cr):
+        w, h = self.get_allocated_width(), self.get_allocated_height(); k = max(4, self.n); gap = 34
+        x0 = w / 2 - (k - 1) * gap / 2 + self.off
+        for i in range(k):
+            cr.arc(x0 + i * gap, h / 2, 9, 0, 6.2832)
+            if i < self.n:
+                cr.set_source_rgba(1, 0.45, 0.55, 1) if self.err else cr.set_source_rgba(0.85, 0.72, 1, 1); cr.fill()
+            else:
+                cr.set_source_rgba(1, 0.45, 0.55, 0.9) if self.err else cr.set_source_rgba(0.85, 0.75, 1, 0.55); cr.set_line_width(2); cr.stroke()
+
+
 class Lock(Win):
     def __init__(self, sw, sh, wall, blur):
         super().__init__(wall, blur, (0, 0), type=Gtk.WindowType.TOPLEVEL)
         self.set_decorated(False); self.set_default_size(sw, sh); self.move(0, 0); self.fullscreen(); self.set_keep_above(True); self.set_skip_taskbar_hint(True)
         self.salt_hash = open(PINF).read().strip().split('$') if os.path.exists(PINF) else None
         self.pin = ''
-        panel = Glass(orientation=Gtk.Orientation.VERTICAL, radius=30, tint=(0.06, 0.05, 0.14, 0.82), halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
-        panel.set_border_width(28); self.add(panel)
-        c = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, halign=Gtk.Align.CENTER); panel.pack_start(c, True, True, 0)
-        try:
-            lg = GdkPixbuf.Pixbuf.new_from_file_at_size(os.path.join(SHARE, 'logo-small.png'), 220, 220)
-            c.pack_start(Gtk.Image.new_from_pixbuf(lg), False, False, 0)
-        except Exception: pass
-        self.clock = Gtk.Label(); self.clock.get_style_context().add_class('clock'); c.pack_start(self.clock, False, False, 0)
-        self.date = Gtk.Label(); self.date.get_style_context().add_class('date'); c.pack_start(self.date, False, False, 0)
-        self.msg = Gtk.Label(label='Введите PIN' if self.salt_hash else ''); self.msg.get_style_context().add_class('small'); c.pack_start(self.msg, False, False, 8)
+        c = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER); self.add(c)
+        self.clock = Gtk.Label(); self.clock.get_style_context().add_class('lockclock'); c.pack_start(self.clock, False, False, 0)
+        self.date = Gtk.Label(); self.date.get_style_context().add_class('date'); c.pack_start(self.date, False, False, 6)
+        try: name = open(os.path.expanduser('~/.config/rembley/user')).read().strip() or 'Rembley'
+        except OSError: name = 'Rembley'
+        row = Gtk.Box(spacing=12, halign=Gtk.Align.CENTER); row.pack_start(Avatar(52), False, False, 0)
+        hi = Gtk.Label(label='Привет, %s' % name); hi.get_style_context().add_class('lockhello'); row.pack_start(hi, False, False, 0)
+        c.pack_start(row, False, False, 14)
+        self.dots = Dots(); self.msg = Gtk.Label(label='Введите PIN' if self.salt_hash else 'Коснитесь, чтобы разблокировать'); self.msg.get_style_context().add_class('lockhint')
         if self.salt_hash:
-            g = Gtk.Grid(row_spacing=8, column_spacing=8, halign=Gtk.Align.CENTER)
+            c.pack_start(self.dots, False, False, 0); c.pack_start(self.msg, False, False, 4)
+            g = Gtk.Grid(row_spacing=10, column_spacing=18, halign=Gtk.Align.CENTER); g.set_margin_top(10)
             for i, k in enumerate(['1', '2', '3', '4', '5', '6', '7', '8', '9', '⌫', '0', '✓']):
-                b = Gtk.Button(label=k); b.get_style_context().add_class('ws'); b.set_size_request(84, 64)
+                b = Gtk.Button(label=k); b.get_style_context().add_class('pad')
+                if k in '⌫✓': b.get_style_context().add_class('pad-small')
+                if k == '✓': b.get_style_context().add_class('pad-ok')
                 b.connect('clicked', lambda _b, k=k: self.key(k)); g.attach(b, i % 3, i // 3, 1, 1)
             c.pack_start(g, False, False, 0)
         else:
-            b = Gtk.Button(label='Разблокировать'); b.get_style_context().add_class('ws'); b.set_size_request(240, 64)
-            b.connect('clicked', lambda _b: self.unlock()); c.pack_start(b, False, False, 12)
+            c.pack_start(self.msg, False, False, 8)
+            b = Gtk.Button(label='Разблокировать'); b.get_style_context().add_class('lockbtn')
+            b.connect('clicked', lambda _b: self.unlock()); c.pack_start(b, False, False, 18)
         self.tick(); GLib.timeout_add_seconds(1, self.tick)
         self.connect('map-event', lambda *_: GLib.idle_add(self.grab))
 
@@ -68,13 +97,12 @@ class Lock(Win):
         if k == '⌫': self.pin = self.pin[:-1]
         elif k == '✓': return self.check()
         elif len(self.pin) < 12: self.pin += k
-        self.msg.set_text('●' * len(self.pin) or 'Введите PIN')
-        if len(self.pin) >= 4 and False: self.check()
+        self.dots.set(len(self.pin)); self.msg.set_text('Введите PIN')
 
     def check(self):
         salt, h = self.salt_hash[0], self.salt_hash[1]
         if hashed(self.pin, salt) == h: self.unlock()
-        else: self.pin = ''; self.msg.set_text('Неверный PIN')
+        else: self.pin = ''; self.msg.set_text('Неверный PIN, попробуйте ещё раз'); self.dots.shake()
 
     def unlock(self):
         try: self.get_window().get_display().get_default_seat().ungrab()

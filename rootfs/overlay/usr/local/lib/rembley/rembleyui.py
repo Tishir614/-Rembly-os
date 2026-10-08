@@ -52,6 +52,15 @@ label { color: #ece6ff; }
 .fab:active { background-color: rgba(255,255,255,0.18); }
 .mbtn { background-image: none; background-color: transparent; border: none; box-shadow: none; padding: 2px 10px; min-height: 40px; }
 .mbtn:active { background-color: rgba(255,255,255,0.18); border-radius: 14px; }
+.pad { background-image: none; background-color: rgba(255,255,255,0.10); border: 1px solid rgba(200,180,255,0.30); border-radius: 36px;
+       min-width: 72px; min-height: 72px; padding: 0; color: #f6f1ff; font-size: 28px; font-weight: 300; box-shadow: none; }
+.pad:active { background-color: rgba(190,140,255,0.45); border-color: rgba(230,200,255,0.8); }
+.pad-ok { background-color: rgba(170,110,255,0.40); border-color: rgba(220,190,255,0.7); }
+.pad-small { font-size: 22px; }
+.lockclock { font-size: 84px; font-weight: 200; color: #fbf8ff; text-shadow: 0 0 30px rgba(170,140,255,0.9); }
+.lockhello { font-size: 20px; color: #efe8ff; text-shadow: 0 0 10px rgba(120,90,220,0.9); }
+.lockhint { font-size: 15px; color: #cfc6ee; }
+.lockbtn { background-image: linear-gradient(90deg, rgba(196,120,196,0.75), rgba(120,92,205,0.65)); border: none; border-radius: 30px; color: #fff; font-size: 20px; min-height: 60px; padding: 0 40px; box-shadow: 0 0 22px rgba(160,110,255,0.55); }
 entry.rl-search { background-color: rgba(255,255,255,0.12); color: #fff; border-radius: 14px; border: 1px solid rgba(190,170,255,0.3); min-height: 38px; }
 """
 
@@ -109,9 +118,12 @@ class Glass(Gtk.Box):
         cr.save(); rrect(cr, 0.5, 0.5, w - 1, h - 1, self.radius); cr.clip_preserve()
         if blur is not None:
             cr.set_source_surface(blur, -(pos[0] + ox), -(pos[1] + oy)); cr.paint()
-        cr.set_source_rgba(*self.tint); cr.paint(); cr.restore()
+        cr.set_source_rgba(*self.tint); cr.paint()
+        sheen = cairo.LinearGradient(0, 0, 0, min(h, 220)); sheen.add_color_stop_rgba(0, 1, 1, 1, 0.10); sheen.add_color_stop_rgba(1, 1, 1, 1, 0)   # light falling on glass
+        cr.set_source(sheen); cr.paint(); cr.restore()
         rrect(cr, 0.75, 0.75, w - 1.5, h - 1.5, self.radius)
-        cr.set_source_rgba(0.72, 0.66, 1.0, 0.38); cr.set_line_width(1.3); cr.stroke()
+        edge = cairo.LinearGradient(0, 0, w, h); edge.add_color_stop_rgba(0, 0.86, 0.80, 1.0, 0.62); edge.add_color_stop_rgba(0.5, 0.72, 0.66, 1.0, 0.28); edge.add_color_stop_rgba(1, 0.80, 0.62, 1.0, 0.42)
+        cr.set_source(edge); cr.set_line_width(1.3); cr.stroke()
         return Gtk.Box.do_draw(self, cr)
 
 
