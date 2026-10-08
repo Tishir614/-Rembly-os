@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.11
+- tools/verify-images.sh + автозапуск в flash-rembley.sh; автомонтирование USB (rembley-automount/eject); rembley-taskman; ntfs-3g/exfat
+
 ## 0.10
 - rembley-autosetup (первичная настройка сама), rembley-optimize, rembley-updater (окно обновления), кнопка раскладки EN/RU в панели, плитки в быстрых настройках, xdotool, update.conf TOKEN/BRANCH
 

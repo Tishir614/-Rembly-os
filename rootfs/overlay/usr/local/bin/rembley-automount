@@ -1,0 +1,34 @@
+#!/bin/bash
+# rembley-automount add|remove KERNELNAME   (called by udev)      rembley-eject [NAME|all]  (safe removal)
+# Never touches the disk Rembley itself runs from (label REMBLEY / current root) and never the Android partitions.
+act=$1; dev=/dev/$2; name=$2
+log() { echo "$(date +%T) $*" >> /var/log/rembley-automount.log; }
+if [ "$(basename "$0")" = rembley-eject ]; then
+  target=${1:-all}; for m in /media/*; do [ -d "$m" ] && mountpoint -q "$m" || continue
+    [ "$target" = all ] || [ "$(basename "$m")" = "$target" ] || continue
+    sync; umount "$m" && rmdir "$m" && notify-send "Можно извлекать" "$(basename "$m")" 2>/dev/null; done; exit 0
+fi
+case $act in
+  add)
+    [ -b "$dev" ] || exit 0
+    fs=$(blkid -o value -s TYPE "$dev" 2>/dev/null); label=$(blkid -o value -s LABEL "$dev" 2>/dev/null)
+    [ -n "$fs" ] || exit 0
+    [ "$label" = REMBLEY ] && exit 0
+    root=$(findmnt -n -o SOURCE / 2>/dev/null); [ "$dev" = "$root" ] && exit 0
+    grep -q "^$dev " /proc/mounts && exit 0
+    case $fs in swap|crypto_LUKS|LVM2_member|linux_raid_member) exit 0;; esac
+    mp="/media/${label:-$name}"; mp=${mp//[^A-Za-z0-9_.\/-]/_}; [ -e "$mp" ] && mp="${mp}-$name"
+    mkdir -p "$mp"
+    case $fs in
+      vfat)  opts="rw,noatime,nosuid,nodev,noexec,utf8,uid=0,gid=0,umask=000,flush"; t=vfat ;;
+      exfat) opts="rw,noatime,nosuid,nodev,noexec,uid=0,gid=0,umask=000"; t=exfat ;;
+      ntfs)  t=ntfs-3g; opts="rw,noatime,nosuid,nodev,noexec,uid=0,gid=0,umask=000" ;;
+      *)     t=$fs; opts="rw,noatime,nosuid,nodev" ;;
+    esac
+    if mount -t "$t" -o "$opts" "$dev" "$mp" 2>>/var/log/rembley-automount.log || mount -o ro,nosuid,nodev "$dev" "$mp" 2>>/var/log/rembley-automount.log; then
+      log "mounted $dev ($fs) at $mp"; notify-send "Подключён накопитель" "$(basename "$mp") — открыть в «Файлы»" 2>/dev/null
+    else log "mount of $dev ($fs) failed"; rmdir "$mp" 2>/dev/null; notify-send "Не удалось подключить накопитель" "$fs: нет драйвера или повреждённая ФС" 2>/dev/null; fi ;;
+  remove)
+    for m in $(awk -v d="$dev" '$1==d {print $2}' /proc/mounts); do umount -l "$m" 2>/dev/null; rmdir "$m" 2>/dev/null; log "removed $dev from $m"; done ;;
+esac
+exit 0

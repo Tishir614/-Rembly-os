@@ -15,12 +15,13 @@
 #   --dry-run         print every fastboot command instead of running it
 #   --yes             skip the typed confirmation (for scripts)
 #   --no-backup-check skip the backup-dir requirement (NOT recommended)
+#   --skip-verify     skip tools/verify-images.sh (kernel==stock, e2fsck, sparse==raw). NOT recommended.
 #
 # SAFETY (hard-coded): the only partitions this script can ever write are  boot, recovery, userdata.
 # It never touches preloader, lk, gpt, nvram, nvdata, protect1/2, secro, proinfo, seccfg, system, vendor, md*.
 set -euo pipefail
 
-MODE=test; DIR=out; BACKUP=""; SERIAL=""; DRY=0; YES=0; NOBK=0
+MODE=test; DIR=out; BACKUP=""; SERIAL=""; DRY=0; YES=0; NOBK=0; NOVER=0
 EXPECT_PRODUCT=K37MV1_BSP
 ORIG_BOOT_SHA=a94d3f8a18d626d0e12c3c1fe0848076a5c7754f2f108f727a9a21249a3483f4
 ALLOWED_PARTS="boot recovery userdata"
@@ -35,6 +36,7 @@ while [ $# -gt 0 ]; do
     --dry-run) DRY=1 ;;
     --yes) YES=1 ;;
     --no-backup-check) NOBK=1 ;;
+    --skip-verify) NOVER=1 ;;
     -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1 (see --help)" >&2; exit 2 ;;
   esac; shift
@@ -71,6 +73,13 @@ if [ "$MODE" != test ]; then
   fi
 fi
 
+if [ "$NOVER" = 0 ]; then
+  info "Pre-flight verification of the images (tools/verify-images.sh)"
+  VER=$(dirname "$0")/verify-images.sh; STOCKARG=(); for c in "$BACKUP/boot.bin" ./boot.bin; do [ -f "$c" ] && { STOCKARG=(--stock-boot "$c"); break; }; done
+  QK=(); [ "$MODE" = test ] && QK=(--boot-only)
+  "$VER" "$DIR" "${STOCKARG[@]}" "${QK[@]}" || die "verification failed - nothing was sent to the tablet"
+fi
+
 if [ "$MODE" != test ] && [ "$NOBK" = 0 ]; then
   info "Checking your backup (you must be able to go back to Android)"
   [ -n "$BACKUP" ] || die "install modes need --backup-dir <folder with your original boot.bin and recovery.bin>"
@@ -86,6 +95,7 @@ if [ "$DRY" = 0 ]; then
   unl=$(fbget unlocked);  [ "$unl" = yes ] || die "bootloader is locked (unlocked: '$unl'). Not touching anything."
   echo "device OK: product=$prod unlocked=$unl"
   if [ "$MODE" != test ]; then
+    mds=$(fbget max-download-size); [ -n "$mds" ] && echo "tablet accepts downloads up to $((mds)) bytes per chunk (fastboot splits the image itself)"
     ps=$(fbget partition-size:userdata); [ -z "$ps" ] && echo "note: tablet does not report partition-size:userdata; fastboot will fail cleanly if the image is too big" || {
       need=$(stat -c %s "$ROOTFS"); have=$((ps)); [ "$need" -le "$have" ] || die "rootfs ($need bytes) is bigger than userdata ($have bytes)"; echo "userdata fits: $need <= $have bytes"; }
   fi
