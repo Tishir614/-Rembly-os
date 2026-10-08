@@ -7,6 +7,7 @@ xfwm4 --compositor=off 2>/dev/null &                   # window manager, no comp
 onboard 2>/dev/null &                                  # on-screen keyboard: auto-shows on text fields (see gschema override)
 rembley-touchd >/var/log/rembley-touchd.log 2>&1 &            # long-press = right click, edge swipes
 rembley-power >/var/log/rembley-power.log 2>&1 &       # screen dim/off, power key, low battery, clock stamp
+rembley-doctor watch >/dev/null 2>&1 &                    # offline auto-repair of known errors
 sleep 1
 # UI first: Xorg, window manager, keyboard and shell outrank applications (apps are started at nice +10 / low IO priority)
 renice -n -8 -p $(pidof Xorg) >/dev/null 2>&1; ionice -c2 -n0 -p $(pidof Xorg) >/dev/null 2>&1

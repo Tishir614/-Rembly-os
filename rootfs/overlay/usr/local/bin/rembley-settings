@@ -325,6 +325,7 @@ class Settings(Gtk.Window):
             st.f_blocks * st.f_frsize / 2 ** 30, out('uptime -p', 1), out("ip -4 -o addr show | awk '{print $2\":\"$4}' | grep -v lo | tr '\\n' ' '", 2) or '—', kv_get(RE + '/display.conf', 'ROTATE', 'CW'))
         l = Gtk.Label(label=t, xalign=0); l.set_selectable(True); v.pack_start(l, False, False, 8)
         v.pack_start(btn('Проверка системы (самодиагностика)', lambda: ui.sh('xfce4-terminal --hold --title=Проверка -e rembley-selftest'), False), False, False, 6)
+        v.pack_start(btn('Доктор: найти и исправить известные ошибки', lambda: ui.sh('xfce4-terminal --hold --title=Доктор -e rembley-doctor'), False), False, False, 6)
         v.pack_start(btn('Собрать отчёт для диагностики', lambda: ui.sh('xfce4-terminal --hold -e rembley-report'), False), False, False, 6)
         v.pack_start(btn('Обновить Rembley (rembley-update)', lambda: ui.sh('xfce4-terminal --hold -e rembley-update'), False), False, False, 4)
         return v

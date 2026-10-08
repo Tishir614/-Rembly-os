@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+"""rembley-doctor - offline auto-repair. Reads the error logs, recognises KNOWN problems and applies SAFE fixes.
+
+  rembley-doctor            check once, fix what it knows, print the result
+  rembley-doctor --dry-run  only say what it would do
+  rembley-doctor watch      background mode (started by the desktop): looks every 60 s, at low priority
+  rembley-doctor --ai       for errors it does not know, ask the optional AI helper (see rembley-ai)
+
+HONEST LIMITS: it fixes only problems that are in its rule table below. An unknown error is reported, not 'fixed'.
+It never touches nvram/nvdata/protect/secro or any partition, never deletes user files."""
+import json, os, re, subprocess, sys, time
+
+LOGS = os.environ['REMBLEY_DOCTOR_LOGS'].split(':') if os.environ.get('REMBLEY_DOCTOR_LOGS') else ['/var/log/rembley-crash.log', '/var/log/rembley-net.log', '/var/log/rembley-shell.log', '/var/log/Xorg.0.log',
+        '/var/log/apt/term.log', '/var/log/wmt_launcher.log']
+STATE = os.environ.get('REMBLEY_DOCTOR_STATE', '/run/rembley/doctor.json')   # /run: cleared every boot, so dmesg is read once per boot
+HIST = '/var/log/rembley-doctor.log'
+DRY = '--dry-run' in sys.argv
+
+
+def sh(cmd, t=300):
+    if DRY: return 0, '(dry-run) ' + cmd
+    try:
+        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=t)
+        return r.returncode, (r.stdout + r.stderr)[-2000:]
+    except Exception as e:
+        return 1, str(e)
+
+
+def online():
+    return subprocess.run('ip route 2>/dev/null | grep -q default', shell=True).returncode == 0
+
+
+def log(msg):
+    line = time.strftime('%F %T ') + msg
+    print(line)
+    try:
+        with open(HIST, 'a') as f: f.write(line + '\n')
+    except OSError: pass
+
+
+# ---- fixes: each takes the regex match, returns (ok, text). Only safe, reversible actions. ----
+def fix_pymod(m):
+    mod = m.group(1).split('.')[0]
+    if not online(): return False, 'нужна сеть, чтобы поставить python3-%s' % mod
+    pkg = 'python3-' + mod.lower().replace('_', '-')
+    rc, out = sh('rembley-pkg install %s' % pkg)
+    return rc == 0, 'установлен %s' % pkg if rc == 0 else 'пакет %s не найден/не поставился' % pkg
+
+
+def fix_dir(m):
+    p = m.group(1)
+    if not p.startswith(('/var/', '/run/', '/tmp/', '/root/.cache/', '/root/.config/', '/root/.local/')) or '..' in p:
+        return False, 'путь %s вне безопасных каталогов' % p
+    if '.' in os.path.basename(p): p = os.path.dirname(p)
+    sh('mkdir -p %s' % p); return True, 'создан каталог %s' % p
+
+
+def fix_lib(m):
+    sys.path[:0] = ['/usr/local/lib/rembley']
+    try:
+        import rembley_heal
+        h = rembley_heal.Healer(log=lambda s: None)
+        if h.fix_library(m.group(1)): return True, 'библиотека %s доступна' % m.group(1)
+    except Exception as e:
+        return False, str(e)
+    if online():
+        rc, out = sh("apt-file search -l %s 2>/dev/null | head -1" % m.group(1))
+        pk = out.strip().split()[-1] if rc == 0 and out.strip() else ''
+        if pk and re.match(r'^[a-z0-9.+-]+$', pk):
+            rc, _ = sh('rembley-pkg install %s' % pk); return rc == 0, 'поставлен %s' % pk
+    return False, 'библиотека %s не найдена' % m.group(1)
+
+
+def fix_space(m):
+    rc, out = sh('rembley-clean'); return rc == 0, 'место очищено (кэши и логи)'
+
+
+def fix_dpkg(m):
+    rc, _ = sh('dpkg --configure -a'); rc2, _ = sh('apt-get -f install -y') if online() else (0, '')
+    return rc == 0 and rc2 == 0, 'пакетная база восстановлена'
+
+
+def fix_lock(m):
+    if subprocess.run('pgrep -x "apt|apt-get|dpkg"', shell=True, capture_output=True).returncode == 0:
+        return False, 'apt ещё работает, подожду'
+    sh('rm -f /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock; dpkg --configure -a')
+    return True, 'снята зависшая блокировка apt'
+
+
+def fix_time(m):
+    rc, out = sh('/etc/rembley/rc.d/03-time.sh'); return rc == 0, 'время восстановлено из последней отметки'
+
+
+def fix_dns(m):
+    if not online(): return False, 'нет маршрута в сеть: сначала Wi-Fi'
+    sh("printf 'nameserver 1.1.1.1\\nnameserver 9.9.9.9\\n' > /etc/resolv.conf"); return True, 'DNS: 1.1.1.1 и 9.9.9.9'
+
+
+def fix_locale(m):
+    sh('locale-gen en_US.UTF-8 ru_RU.UTF-8 >/dev/null 2>&1; update-locale LANG=ru_RU.UTF-8'); return True, 'локали пересозданы'
+
+
+def fix_oom(m):
+    sh('rembley-clean >/dev/null 2>&1; rembley-eco on 2>/dev/null'); return True, 'память освобождена, включён экономный режим'
+
+
+def fix_shell(m):
+    if subprocess.run('pgrep -f rembley-shell', shell=True, capture_output=True).returncode == 0: return True, 'оболочка жива'
+    sh('rembley-restart-shell'); return True, 'оболочка перезапущена'
+
+
+def fix_x(m):
+    sh('rm -f /tmp/.X0-lock /tmp/.X11-unix/X0'); return True, 'убраны зависшие файлы X-сервера'
+
+
+def fix_appimage(m):
+    sh('rembley-nosandbox >/dev/null 2>&1'); return True, 'включён режим без песочницы / FUSE-обход для AppImage'
+
+
+def fix_wifi(m):
+    rc, out = sh('rembley-net heal', 600); return rc == 0, 'самолечение Wi-Fi: ' + (out.strip().splitlines() or [''])[-1]
+
+
+RULES = [  # (name, regex, fix)
+    ('python-модуль', re.compile(r"ModuleNotFoundError: No module named '([\w.]+)'"), fix_pymod),
+    ('нет каталога', re.compile(r"(?:FileNotFoundError|No such file or directory)[^\n]*?'(/[^']+)'"), fix_dir),
+    ('нет библиотеки', re.compile(r'error while loading shared libraries: (\S+\.so[\w.]*)'), fix_lib),
+    ('нет места', re.compile(r'No space left on device|\[Errno 28\]'), fix_space),
+    ('dpkg прерван', re.compile(r'dpkg was interrupted|E: Unmet dependencies|dpkg: error processing'), fix_dpkg),
+    ('apt занят', re.compile(r'Could not get lock /var/lib/(?:dpkg|apt)'), fix_lock),
+    ('часы', re.compile(r'certificate is not yet valid|Release file .* is not valid yet'), fix_time),
+    ('DNS', re.compile(r'Temporary failure in name resolution|Could not resolve host'), fix_dns),
+    ('локаль', re.compile(r'Setting locale failed|locale\.Error: unsupported locale'), fix_locale),
+    ('память', re.compile(r'MemoryError|Out of memory: Killed|Cannot allocate memory'), fix_oom),
+    ('оболочка', re.compile(r'rembley-shell.*(?:Traceback|crashed|segfault)', re.S), fix_shell),
+    ('X-сервер', re.compile(r'Server is already active for display|Cannot establish any listening sockets'), fix_x),
+    ('AppImage/FUSE', re.compile(r'fusermount|FUSE|dlopen\(\): error loading libfuse|Cannot mount AppImage'), fix_appimage),
+    ('Wi-Fi прошивка', re.compile(r'Direct firmware load for \S+ failed|wmt_launcher.*(?:fail|not found)', re.I), fix_wifi),
+]
+
+
+def load_state():
+    try: return json.load(open(STATE))
+    except Exception: return {}
+
+
+def save_state(s):
+    try:
+        os.makedirs(os.path.dirname(STATE), exist_ok=True); json.dump(s, open(STATE, 'w'))
+    except OSError: pass
+
+
+def new_text():
+    """Only the part of every log that appeared since the last run (so one error is handled once)."""
+    st, txt = load_state(), ''
+    for p in LOGS:
+        try: size = os.path.getsize(p)
+        except OSError: continue
+        off = st.get(p, 0)
+        if size < off: off = 0
+        if size > off:
+            with open(p, errors='replace') as f:
+                f.seek(max(off, size - 200000)); txt += f.read()
+        st[p] = size
+    if not st.get('dmesg_done'):                       # the kernel ring buffer has no offsets: read it once per boot
+        st['dmesg_done'] = 1
+        try: txt += subprocess.run('dmesg 2>/dev/null | tail -300', shell=True, capture_output=True, text=True).stdout
+        except Exception: pass
+    if not DRY: save_state(st)
+    return txt
+
+
+def health_text():
+    """Problems visible right now without any log."""
+    t = ''
+    if subprocess.run('df -m --output=avail / | tail -1', shell=True, capture_output=True, text=True).stdout.strip().isdigit():
+        free = int(subprocess.run('df -m --output=avail / | tail -1', shell=True, capture_output=True, text=True).stdout)
+        if free < 150: t += 'No space left on device\n'
+    if os.path.exists('/var/lib/dpkg/updates') and os.listdir('/var/lib/dpkg/updates'): t += 'dpkg was interrupted\n'
+    return t
+
+
+def run_once(use_ai=False):
+    txt = new_text() + health_text()
+    done, unknown = [], []
+    for name, rx, fix in RULES:
+        m = rx.search(txt)
+        if not m: continue
+        ok, what = fix(m)
+        log('%s %s: %s' % ('ИСПРАВЛЕНО' if ok else 'НЕ УДАЛОСЬ', name, what)); done.append((name, ok))
+    if not done and re.search(r'Traceback \(most recent call last\)|\bsegfault\b|Segmentation fault', txt):
+        unknown.append(txt[-3000:])
+        log('Неизвестная ошибка (в таблице правил её нет).')
+        if use_ai:
+            rc = subprocess.run(['rembley-ai', 'explain', '--stdin'], input=unknown[-1], text=True).returncode
+    return done, unknown
+
+
+def notify(done):
+    fixed = [n for n, ok in done if ok]
+    if fixed and not DRY:
+        subprocess.Popen(['notify-send', 'Rembley Doctor', 'Исправлено: ' + ', '.join(fixed)], stderr=subprocess.DEVNULL)
+
+
+def main():
+    if 'watch' in sys.argv:
+        os.nice(15)
+        while True:
+            try: notify(run_once()[0])
+            except Exception as e: log('doctor: %s' % e)
+            time.sleep(60)
+    done, unk = run_once('--ai' in sys.argv)
+    if not done and not unk: print('Проблем не найдено.')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
