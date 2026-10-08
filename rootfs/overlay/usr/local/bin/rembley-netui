@@ -75,9 +75,10 @@ class W(Gtk.Window):
         self.sw = Gtk.Switch(); self.sw.set_valign(Gtk.Align.CENTER); self.sw.connect('state-set', self.on_switch); sw_box.pack_start(self.sw, False, False, 0)
         top.pack_end(sw_box, False, False, 0); v.pack_start(top, False, False, 0)
         if not HAVE_BLOBS and not DEMO:
-            n = Gtk.Label(label=('Нет файлов Android для чипа Wi-Fi (/system/bin/wmt_launcher).\n'
-                                 'На ПК: tools/make-blobs.sh <папка с system.bin и vendor.bin>, затем пересоберите образ (docs/NETWORK.md).'), xalign=0)
+            n = Gtk.Label(label=('Драйверы Wi-Fi ещё не установлены. Нажмите кнопку: файлы берутся из Android на самом планшете '
+                                 '(только чтение, интернет не нужен).'), xalign=0)
             n.set_line_wrap(True); n.get_style_context().add_class('small'); v.pack_start(n, False, False, 0)
+            self.drvbtn = big_button('Установить драйверы Wi-Fi автоматически', self.install_drivers, True); v.pack_start(self.drvbtn, False, False, 0)
         self.scan_btn = big_button('Искать сети', self.scan); v.pack_start(self.scan_btn, False, False, 0)
         self.spin = Gtk.Spinner(); v.pack_start(self.spin, False, False, 0)
         lbl = Gtk.Label(label='Доступные сети', xalign=0); lbl.get_style_context().add_class('rl-title'); v.pack_start(lbl, False, False, 0)
@@ -196,6 +197,14 @@ class W(Gtk.Window):
             self.ui(self.card.set_text, ('Подключено к %s' % ssid) if r.returncode == 0 else 'Не удалось подключиться: ' + (r.stdout + r.stderr).strip()[-160:])
             self.ui(self.refresh)
         threading.Thread(target=w, daemon=True).start()
+
+    def install_drivers(self):
+        self.ui(self.card.set_text, 'Ищем драйверы в разделах Android…')
+        try: r = subprocess.run(['rembley-drivers', 'install'], capture_output=True, text=True, timeout=600)
+        except Exception as e: self.ui(self.card.set_text, 'Не удалось: %s' % e); return
+        ok = os.path.exists('/system/bin/wmt_launcher')
+        self.ui(self.card.set_text, 'Драйверы установлены. Закройте и откройте окно Wi-Fi снова.' if ok else
+                ('Драйверы не найдены: ' + (r.stdout + r.stderr).strip().splitlines()[-1][:160] if (r.stdout + r.stderr).strip() else 'драйверы не найдены'))
 
     def modem_up(self):
         a = self.apn.get_text().strip()

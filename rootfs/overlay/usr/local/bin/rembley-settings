@@ -172,7 +172,21 @@ class Settings(Gtk.Window):
         self.nst = Gtk.Label(label=out('rembley-net status 2>&1', 8) or 'Нет подключения', xalign=0); self.nst.set_line_wrap(True); v.pack_start(self.nst, False, False, 8)
         for t, c in (('Wi-Fi', 'rembley-netui'), ('Bluetooth', 'rembley-netui bt'), ('Мобильные данные (SIM)', 'rembley-netui modem')):
             v.pack_start(btn(t, lambda c=c: ui.sh(c), False), False, False, 4)
-        h = Gtk.Label(label='Wi-Fi/Bluetooth/SIM работают только после установки файлов Android: docs/NETWORK.md', xalign=0); h.get_style_context().add_class('small'); v.pack_start(h, False, False, 10)
+        import json as _json
+        try: di = _json.load(open('/var/lib/rembley/drivers.json'))
+        except Exception: di = None
+        ready = os.path.exists('/system/bin/wmt_launcher')
+        self.drv = Gtk.Label(label=('Драйверы Wi-Fi: установлены (%s файлов прошивки).' % di.get('firmware_files', '?') if (ready and di) else 'Драйверы Wi-Fi: установлены.' if ready else
+                                    'Драйверы Wi-Fi: НЕ установлены. Они берутся из раздела Android на самом планшете (только чтение), интернет не нужен.'), xalign=0)
+        self.drv.set_line_wrap(True); v.pack_start(self.drv, False, False, 6)
+        v.pack_start(btn('Найти и установить драйверы Wi-Fi автоматически', lambda: ui.sh('xfce4-terminal --hold --title=Драйверы -e "rembley-drivers install"'), False), False, False, 4)
+        v.pack_start(btn('Состояние драйверов', lambda: ui.sh('xfce4-terminal --hold --title=Драйверы -e "rembley-drivers status"'), False), False, False, 4)
+        cc = Gtk.ComboBoxText.new_with_entry()
+        for c in ('RU', 'KZ', 'BY', 'UA', 'TR', 'US', 'DE', 'GB', 'FR', 'IT', 'ES', 'PL', 'CN', 'IN'): cc.append_text(c)
+        cc.get_child().set_text(kv_get(RE + '/net.conf', 'COUNTRY', 'US').strip('"')); cc.get_child().connect('focus-in-event', lambda *_: osk(True))
+        v.pack_start(row('Страна Wi-Fi (код, 2 буквы)', cc, 'Определяет разрешённые каналы и мощность: укажите страну, где вы находитесь.'), False, False, 8)
+        v.pack_start(btn('Сохранить страну', lambda: (kv_set(RE + '/net.conf', 'COUNTRY', cc.get_child().get_text().strip().upper()[:2]), ui.sh('iw reg set %s' % cc.get_child().get_text().strip().upper()[:2])), False), False, False, 4)
+        h = Gtk.Label(label='Bluetooth на стоковом ядре недоступен (в ядре нет стека). Подробности: docs/NETWORK.md', xalign=0); h.get_style_context().add_class('small'); v.pack_start(h, False, False, 10)
         return v
 
     def p_time(self):

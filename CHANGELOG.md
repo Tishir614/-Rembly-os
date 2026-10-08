@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7 — драйверы ставятся сами
+* `rembley-drivers`: достаёт файлы Wi-Fi/BT/GPS/modem из разделов Android `system`/`vendor` на самом планшете (read-only), ставит их и запускает Wi-Fi; безопасная распаковка
+* Автозапуск при первой загрузке, перед установкой во внутреннюю память и по кнопке (Настройки → Сеть, окно Wi-Fi); страна Wi-Fi; regdb/crda/iw из Ubuntu при наличии сети
+* `ANDROID_DUMP=<папка> sudo -E rootfs/build-rootfs.sh` вшивает файлы в образ; скрипт прошивки показывает, включены ли они
+
 ## 0.6 — установка и свои добавки
 * `tools/flash-rembley.sh` (test / install-recovery / install-boot): проверки устройства, образов и бэкапа, список разрешённых разделов (boot, recovery, userdata), `--dry-run`; `tools/restore-android.sh`
 * `rembley-install-internal` + страница «Установка на планшет»: копирует работающую систему во внутренний userdata одним нажатием, с прогрессом; автоматическое расширение ФС при первом запуске

@@ -39,6 +39,11 @@ tools/flash-rembley.sh install-boot --dir out --backup-dir /home/tishir645/пл�
 Как запускать Linux в режиме `install-recovery`: через вход в recovery (обычно Vol+ и Power при включении, либо меню LK). Точную комбинацию для этого
 планшета я не знаю — проверьте. Если не выходит, `fastboot boot out/A73-linux-test.img` работает всегда и rootfs уже будет во внутренней памяти.
 
+## Драйверы Wi-Fi при установке
+Отдельно скачивать ничего не нужно: при первом запуске (и перед установкой во внутреннюю память) система сама берёт файлы Wi-Fi из разделов Android на планшете
+(`rembley-drivers`, только чтение). Хотите вшить их в образ заранее: `ANDROID_DUMP=/home/tishir645/планшет sudo -E rootfs/build-rootfs.sh`.
+Скрипт прошивки скажет, есть ли они в образе. Подробнее: `docs/NETWORK.md`.
+
 ## Откат на Android
 ```
 tools/restore-android.sh --backup-dir /home/tishir645/планшет                    # вернуть boot и recovery

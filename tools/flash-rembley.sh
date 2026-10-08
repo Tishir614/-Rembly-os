@@ -65,6 +65,10 @@ if [ "$MODE" != test ]; then
   [ -f "$ROOTFS.sha256" ] && { (cd "$DIR" && sha256sum -c "$(basename "$ROOTFS").sha256" >/dev/null) || die "rootfs checksum mismatch"; echo "rootfs checksum OK"; }
   [ "$(od -An -tx1 -j1080 -N2 "$ROOTFS" | tr -d ' ')" = 53ef ] || die "$ROOTFS is not an ext4 image"
   [ "$(dd if="$ROOTFS" bs=1 skip=1144 count=16 2>/dev/null | tr -d '\0')" = REMBLEY ] || die "$ROOTFS has no REMBLEY label (stage 1 would not find it)"
+  if command -v debugfs >/dev/null; then
+    if debugfs -R "stat /system/bin/wmt_launcher" "$ROOTFS" 2>&1 | grep -q 'Inode:'; then echo "Wi-Fi drivers: included in this rootfs image"
+    else echo "Wi-Fi drivers: not baked into this image -> on first boot the tablet takes them from its OWN Android partitions automatically (rembley-drivers)"; fi
+  fi
 fi
 
 if [ "$MODE" != test ] && [ "$NOBK" = 0 ]; then

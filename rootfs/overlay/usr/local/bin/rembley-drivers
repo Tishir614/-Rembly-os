@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""rembley-drivers: fetch the Wi-Fi / Bluetooth / GPS / modem helper programs and firmware from the tablet's OWN Android partitions
+(`system`, `vendor`) and install them. These files are proprietary and specific to your exact Android build, so they cannot be downloaded
+from a generic place; they are already on the tablet and are read here READ-ONLY (debugfs never writes), no internet needed.
+
+  rembley-drivers status
+  rembley-drivers install [--auto] [--system DEV] [--vendor DEV] [--root DIR]
+
+--auto    quiet mode used at boot / by the installer (never prompts; always exits 0)
+--system/--vendor  use these block devices or image files instead of looking for PARTNAME=system / vendor
+--root    install under DIR instead of / (tests)"""
+import glob, json, os, subprocess, sys, tarfile, time
+
+sys.path[:0] = ['/usr/local/lib/rembley', os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'lib', 'rembley')]
+import rembley_blobs
+
+SYSFS = os.environ.get('SYSFS', '/sys'); DEVDIR = os.environ.get('DEVDIR', '/dev')
+
+
+def arg(name, default=None):
+    return sys.argv[sys.argv.index(name) + 1] if name in sys.argv else default
+
+
+ROOT = arg('--root', '')
+STATE = ROOT + '/var/lib/rembley'
+AUTO = '--auto' in sys.argv
+
+
+def find_part(name):
+    for u in glob.glob(SYSFS + '/class/block/*/uevent'):
+        try:
+            if ('PARTNAME=%s' % name) in open(u).read().split('\n'):
+                return os.path.join(DEVDIR, os.path.basename(os.path.dirname(u)))
+        except OSError:
+            pass
+    return None
+
+
+def say(msg):
+    print(msg, flush=True)
+
+
+def notify(title, body):
+    if not ROOT:
+        subprocess.run(['notify-send', title, body], stderr=subprocess.DEVNULL)
+
+
+def safe_extract(tar_path, dest):
+    """Unpack only system/ and vendor/ entries; never absolute or '..' paths; never replace an existing symlink or directory."""
+    n = 0
+    with tarfile.open(tar_path) as t:
+        for m in t.getmembers():
+            name = m.name.lstrip('./')
+            if not (name.startswith('system/') or name.startswith('vendor/')) or '..' in name.split('/') or m.issym() or m.islnk() or m.isdev():
+                continue
+            target = os.path.join(dest, name)
+            if os.path.islink(target) or (os.path.isdir(target) and not m.isdir()):
+                continue
+            if m.isdir():
+                os.makedirs(target, exist_ok=True); continue
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            m.name = name; t.extract(m, dest); os.chown(target, 0, 0) if os.geteuid() == 0 else None; n += 1
+    return n
+
+
+def live_status():
+    fw = [p for d in ('/vendor/firmware', '/system/etc/firmware') for p in glob.glob(ROOT + d + '/*')]
+    rc = ''.join(open(f, errors='replace').read() for g in ('/vendor/etc/init/*.rc', '/vendor/etc/init/hw/*.rc', '/system/etc/init/*.rc') for f in glob.glob(ROOT + g))
+    return {'wmt_launcher': os.path.exists(ROOT + '/system/bin/wmt_launcher'), 'wmt_loader': os.path.exists(ROOT + '/system/bin/wmt_loader'),
+            'android_linker': os.path.exists(ROOT + '/system/bin/linker'), 'firmware_files': len(fw),
+            'wmt_launcher_in_rc': 'service wmt_launcher' in rc, 'mnld_gps': os.path.exists(ROOT + '/system/bin/mnld'),
+            'ccci_modem_helpers': len(glob.glob(ROOT + '/system/bin/*ccci*') + glob.glob(ROOT + '/vendor/bin/*ccci*'))}
+
+
+def status():
+    s = live_status(); s['partitions'] = {'system': find_part('system'), 'vendor': find_part('vendor')}
+    try: s['last_install'] = json.load(open(STATE + '/drivers.json'))
+    except Exception: s['last_install'] = None
+    s['wifi_ready'] = bool(s['wmt_launcher'] and s['android_linker'] and s['firmware_files'])
+    print(json.dumps(s, indent=2, ensure_ascii=False)); return s
+
+
+def install():
+    os.makedirs(STATE, exist_ok=True)
+    sysdev, vendev = arg('--system', find_part('system')), arg('--vendor', find_part('vendor'))
+    cand = [(r, d) for r, d in (('system', sysdev), ('vendor', vendev)) if d and os.path.exists(d)]
+    if not cand:
+        msg = ("Android partitions 'system'/'vendor' not found on this tablet (they were erased, or this is not the A73). "
+               "Use your own backup on a PC instead: tools/make-blobs.sh <folder with system.bin and vendor.bin> (docs/NETWORK.md).")
+        say(msg); notify('Драйверы Wi-Fi', 'Разделы Android не найдены. Нужна резервная копия: docs/NETWORK.md')
+        open(STATE + '/drivers-tried', 'w').write(str(int(time.time()))); return 0 if AUTO else 1
+    good = []
+    for r, d in cand:
+        if rembley_blobs.looks_like_android(d): good.append((r, d)); say('found Android %s partition: %s (read-only)' % (r, d))
+        else: say('skipping %s: does not look like an Android %s tree' % (d, r))
+    if not good:
+        say('no readable Android system/vendor tree'); open(STATE + '/drivers-tried', 'w').write(str(int(time.time()))); return 0 if AUTO else 1
+    tarp = STATE + '/android-blobs.tar.gz'
+    try:
+        s = rembley_blobs.run(good, out=tarp, log=say)
+    except RuntimeError as e:
+        say(str(e)); notify('Драйверы Wi-Fi', 'В разделах Android не найдены файлы связи MediaTek')
+        open(STATE + '/drivers-tried', 'w').write(str(int(time.time()))); return 0 if AUTO else 1
+    n = safe_extract(tarp, ROOT or '/')
+    st = live_status(); st.update({'time': int(time.time()), 'sources': dict(good), 'files_installed': n, 'binaries': s['binaries']})
+    json.dump(st, open(STATE + '/drivers.json', 'w'), indent=2); open(STATE + '/drivers-tried', 'w').write(str(int(time.time())))
+    say('installed %d files; Wi-Fi launcher: %s, firmware files: %d, rc entry: %s' % (n, st['wmt_launcher'], st['firmware_files'], st['wmt_launcher_in_rc']))
+    if not ROOT:
+        # small helpers that DO come from the Ubuntu archive (regulatory database, wpa_supplicant, iw): fetch them when a network is up
+        if subprocess.run('ip route | grep -q default', shell=True).returncode == 0:
+            say('network is up: installing regulatory database and Wi-Fi tools from Ubuntu'); subprocess.run(['rembley-pkg', 'install', 'wireless-regdb', 'crda', 'iw', 'wpasupplicant', 'rfkill'])
+        if st['wmt_launcher']:
+            say('starting Wi-Fi'); subprocess.run(['rembley-net', 'auto'])
+    notify('Драйверы установлены' if st['wmt_launcher'] else 'Драйверы: неполный набор',
+           'Wi-Fi готов: откройте значок Wi-Fi в трее' if st['wmt_launcher'] else 'Не найден wmt_launcher, подробности: rembley-drivers status')
+    return 0
+
+
+if __name__ == '__main__':
+    cmd = sys.argv[1] if len(sys.argv) > 1 else 'status'
+    if cmd == 'status': status()
+    elif cmd == 'install': sys.exit(install())
+    else: print(__doc__); sys.exit(2)

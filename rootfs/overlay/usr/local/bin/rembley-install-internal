@@ -40,6 +40,10 @@ say "PLAN: format $TARGET as ext4 labelled REMBLEY (ERASES everything on it), co
 [ "$DRY" = 1 ] && { say "dry-run: nothing written"; exit 0; }
 if [ "$YES" = 0 ]; then printf 'Type YES to erase %s and install: ' "$TARGET"; read -r a; [ "$a" = YES ] || die "aborted, nothing was written"; fi
 
+# 3b. Wi-Fi/BT helper files are copied together with the system: fetch them from Android's own partitions first (read-only), best effort
+if [ -z "$SRC_NODRIVERS" ] && [ ! -x /system/bin/wmt_launcher ] && [ "$SRC" = / ]; then
+  say "getting Wi-Fi drivers from the tablet's Android partitions (read-only)"; rembley-drivers install --auto 2>&1 | tail -3
+fi
 # 4. do it
 say "formatting"; echo "2" > "$PROG"
 mke2fs -q -t ext4 -L REMBLEY -F -E lazy_itable_init=1 "$TARGET" || die "mkfs failed"

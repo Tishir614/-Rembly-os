@@ -8,6 +8,15 @@ HERE=$(cd "$(dirname "$0")/.." && pwd); OUT=$HERE/out; R=${ROOTFS_DIR:-/var/remb
 MIRROR=${MIRROR:-https://ports.ubuntu.com/ubuntu-ports}
 mkdir -p "$OUT" "$(dirname "$R")"
 
+# Wi-Fi/BT helper files: if you point ANDROID_DUMP at your backup folder (system.bin + vendor.bin) they are extracted automatically.
+#   ANDROID_DUMP=/home/you/backup sudo -E rootfs/build-rootfs.sh        (REFRESH_BLOBS=1 to redo it)
+# Without it the image still works: on first boot the tablet takes them from its OWN Android partitions (rembley-drivers).
+if [ -n "${ANDROID_DUMP:-}" ] && { [ ! -f "$OUT/android-blobs.tar.gz" ] || [ -n "${REFRESH_BLOBS:-}" ]; }; then
+  [ -f "$ANDROID_DUMP/system.bin" ] || { echo "ANDROID_DUMP=$ANDROID_DUMP has no system.bin" >&2; exit 1; }
+  vend=(); [ -f "$ANDROID_DUMP/vendor.bin" ] && vend=("$ANDROID_DUMP/vendor.bin")
+  echo "== extracting Wi-Fi/BT files from $ANDROID_DUMP"
+  python3 "$HERE/tools/extract_android_blobs.py" "$ANDROID_DUMP/system.bin" "${vend[@]}" -o "$OUT/android-blobs.tar.gz"
+fi
 # qemu-user must be registered for armhf binaries on every run (it is lost after reboot)
 [ -e /proc/sys/fs/binfmt_misc/qemu-arm ] || { mountpoint -q /proc/sys/fs/binfmt_misc || mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc
   head -1 /usr/lib/binfmt.d/qemu-arm.conf > /proc/sys/fs/binfmt_misc/register; }
@@ -61,7 +70,7 @@ mkdir -p "$R/system/bin" "$R/var/log" "$R/run/user" "$R/root/Projects"
 ln -sf /bin/busybox "$R/sbin/mdev"
 if [ -f "$OUT/android-blobs.tar.gz" ]; then      # Wi-Fi/BT/modem blobs from the user's own firmware (tools/extract_android_blobs.py)
   echo "== adding android blobs"; tar -xzf "$OUT/android-blobs.tar.gz" -C "$R"
-else echo "NOTE: out/android-blobs.tar.gz not found -> no Wi-Fi/BT/SIM (see docs/NETWORK.md)"; fi
+else echo "NOTE: no android-blobs.tar.gz in the image: on first boot the tablet fetches the Wi-Fi/BT files from its own Android partitions (rembley-drivers). To bake them in: ANDROID_DUMP=<backup folder> sudo -E rootfs/build-rootfs.sh"; fi
 ln -sf /bin/sh "$R/system/bin/sh"        # adbd (started by stage 1) expects /system/bin/sh
 chroot "$R" python3 -m compileall -q /usr/local/lib/rembley     # cached .pyc: faster desktop start on the slow CPU
 date +%s > "$R/etc/rembley/buildtime"
