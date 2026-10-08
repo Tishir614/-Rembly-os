@@ -117,6 +117,10 @@ class Settings(Gtk.Window):
         self.icons.set_active_id('flat' if read(CFG + '/icons') == 'flat' else 'tiles')
         v.pack_start(row('Стиль иконок', self.icons, 'Цветные стеклянные плитки или обычные значки. Применится после перезапуска рабочего стола.'), False, False, 0)
         v.pack_start(btn('Применить стиль иконок', lambda: (os.makedirs(CFG, exist_ok=True), open(CFG + '/icons', 'w').write(self.icons.get_active_id()), ui.sh('rembley-restart-shell')), False), False, False, 4)
+        self.motion = Gtk.ComboBoxText(); self.motion.append('full', 'Полные (живой стол)'); self.motion.append('reduced', 'Экономные (только мерцание звёзд)'); self.motion.append('off', 'Выключены')
+        self.motion.set_active_id(read(CFG + '/motion') if read(CFG + '/motion') in ('full', 'reduced', 'off') else 'full')
+        v.pack_start(row('Анимации рабочего стола', self.motion, 'Сами отключаются при высокой нагрузке, экономии заряда и когда рабочий стол закрыт окнами.'), False, False, 0)
+        v.pack_start(btn('Применить анимации', lambda: (os.makedirs(CFG, exist_ok=True), open(CFG + '/motion', 'w').write(self.motion.get_active_id()), ui.sh('rembley-restart-shell')), False), False, False, 4)
         fc = Gtk.FileChooserButton(title='Обои', action=Gtk.FileChooserAction.OPEN); f = Gtk.FileFilter(); f.set_name('Изображения'); f.add_mime_type('image/*'); fc.add_filter(f)
         fc.connect('file-set', lambda w: self.set_wall(w.get_filename()))
         v.pack_start(row('Обои', fc, 'Фон «стекла» подстроится автоматически. Рекомендуется 1280×800.'), False, False, 0)
@@ -224,6 +228,7 @@ class Settings(Gtk.Window):
         v.pack_start(btn('Сохранить Git', lambda: (subprocess.run(['git', 'config', '--global', 'user.name', n.get_text()]), subprocess.run(['git', 'config', '--global', 'user.email', e.get_text()])), False), False, False, 4)
         v.pack_start(btn('Открыть терминал', lambda: ui.sh('xfce4-terminal'), False), False, False, 14)
         v.pack_start(btn('Магазин приложений', lambda: ui.sh('rembley-store'), False), False, False, 4)
+        v.pack_start(btn('Какие Linux-программы запустятся? (проверка ядра)', lambda: ui.sh('xfce4-terminal --hold --title=Совместимость -e rembley-compat'), False), False, False, 4)
         return v
 
     def passwd(self):

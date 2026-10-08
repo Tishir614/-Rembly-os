@@ -34,7 +34,10 @@ class Store(Gtk.Window):
         top = Gtk.Box(spacing=8); self.q = Gtk.SearchEntry(); self.q.set_placeholder_text('Поиск по всем пакетам Ubuntu')
         self.q.connect('activate', lambda *_: self.search()); self.q.connect('focus-in-event', lambda *_: osk(True))
         sb = Gtk.Button(label='Найти'); sb.connect('clicked', lambda _b: self.search()); ub = Gtk.Button(label='Обновить списки'); ub.connect('clicked', lambda _b: self.apt('update', ''))
-        top.pack_start(self.q, True, True, 0); top.pack_start(sb, False, False, 0); top.pack_start(ub, False, False, 0); v.pack_start(top, False, False, 0)
+        fb_ = Gtk.FileChooserButton(title='Установить из файла (.deb / .AppImage)', action=Gtk.FileChooserAction.OPEN); fb_.set_size_request(250, -1)
+        flt = Gtk.FileFilter(); flt.set_name('Программы (.deb, .AppImage)'); [flt.add_pattern(x) for x in ('*.deb', '*.AppImage', '*.appimage')]; fb_.add_filter(flt)
+        fb_.connect('file-set', lambda w: ui.sh('xfce4-terminal --hold --title=Установка -e "rembley-install \'%s\'"' % w.get_filename().replace("'", '')))
+        top.pack_start(self.q, True, True, 0); top.pack_start(sb, False, False, 0); top.pack_start(ub, False, False, 0); top.pack_start(fb_, False, False, 0); v.pack_start(top, False, False, 0)
         nb = Gtk.Notebook(); nb.set_tab_pos(Gtk.PositionType.LEFT); v.pack_start(nb, True, True, 0); self.lists = {}
         for cat, items in CATALOG.items():
             lb = Gtk.ListBox(); lb.set_selection_mode(Gtk.SelectionMode.NONE); sc = Gtk.ScrolledWindow(); sc.add(lb); nb.append_page(sc, Gtk.Label(label=cat)); self.lists[cat] = lb
@@ -58,7 +61,8 @@ class Store(Gtk.Window):
 
     def apt(self, verb, pkg, cb=None):
         def w():
-            cmd = 'DEBIAN_FRONTEND=noninteractive apt-get %s -y %s %s 2>&1' % (verb, '--no-install-recommends' if verb == 'install' else '', pkg)
+            action = {'install': 'install', 'remove --purge': 'remove', 'update': 'update'}.get(verb, verb)
+            cmd = 'rembley-pkg %s %s 2>&1' % (action, pkg)          # checks free space first, quiet apt settings
             p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, text=True)
             for line in p.stdout: GLib.idle_add(self.append, line)
             p.wait(); GLib.idle_add(self.append, '== готово (код %d)\n' % p.returncode); cb and cb()

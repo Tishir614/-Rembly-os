@@ -1,5 +1,6 @@
 #!/bin/sh
 # Runs inside Xorg. Everything graphical must live under ONE D-Bus session (onboard, dunst, shell talk over it).
+[ -f /etc/profile.d/rembley-linux.sh ] && . /etc/profile.d/rembley-linux.sh
 export XDG_CURRENT_DESKTOP=XFCE GTK_OVERLAY_SCROLLING=1 GDK_SCALE=1
 [ -f /etc/rembley/display.conf ] && . /etc/rembley/display.conf; DPI=${DPI:-140}
 [ -f /etc/rembley/kbd.conf ] && . /etc/rembley/kbd.conf

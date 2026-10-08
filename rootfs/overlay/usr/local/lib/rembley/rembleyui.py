@@ -4,7 +4,7 @@
 Glass look = a blurred copy of the wallpaper painted behind each panel (done once, so it costs
 nothing while running). Windows: home (desktop layer), bar (dock + workspaces + tray, with strut),
 launcher (all apps)."""
-import glob, json, math, os, shutil, subprocess, sys, threading, time, urllib.request
+import glob, json, math, os, re, shutil, subprocess, sys, threading, time, urllib.request
 
 import gi
 gi.require_version('Gtk', '3.0'); gi.require_version('Gdk', '3.0')
@@ -14,7 +14,6 @@ try:
 except Exception:
     GdkX11 = None
 import cairo
-from PIL import Image, ImageFilter
 
 DEMO = bool(os.environ.get('REMBLEY_DEMO'))          # fills widgets with sample data (screenshots only)
 CFG = os.path.expanduser('~/.config/rembley'); os.makedirs(CFG, exist_ok=True)
@@ -49,34 +48,32 @@ label { color: #ece6ff; }
 .note-box textview, .note-box textview text { background-color: #fdeea6; color: #3a3320; font-size: 14px; }
 .note-title { color: #3a3320; font-weight: 600; font-size: 13px; }
 .note-btn { background-image: none; background-color: transparent; border: none; box-shadow: none; color: #3a3320; min-width: 30px; min-height: 30px; padding: 0; font-size: 20px; }
+.fab { padding: 0; margin: 0; min-width: 0; min-height: 0; border: none; border-radius: 15px; background-image: none; background-color: transparent; box-shadow: none; }
+.fab:active { background-color: rgba(255,255,255,0.18); }
 .mbtn { background-image: none; background-color: transparent; border: none; box-shadow: none; padding: 2px 10px; min-height: 40px; }
 .mbtn:active { background-color: rgba(255,255,255,0.18); border-radius: 14px; }
 entry.rl-search { background-color: rgba(255,255,255,0.12); color: #fff; border-radius: 14px; border: 1px solid rgba(190,170,255,0.3); min-height: 38px; }
 """
 
-_KEEP = []
-
-
-def surface_from(im):
-    r, g, b = im.convert('RGB').split()
-    im = Image.merge('RGBA', (b, g, r, Image.new('L', im.size, 255)))
-    buf = bytearray(im.tobytes()); _KEEP.append(buf)
-    return cairo.ImageSurface.create_for_data(buf, cairo.FORMAT_ARGB32, im.size[0], im.size[1], im.size[0] * 4)
-
-
 def load_wallpaper(w, h):
+    """(sharp, blurred) cairo surfaces covering w x h. Native GdkPixbuf only (no PIL): scale-to-cover, then the glass blur is a
+    cheap down/up-scale (box-like blur) done once at startup."""
     path = os.environ.get('REMBLEY_WALL') or next((p for p in (CFG + '/wallpaper.png', CFG + '/wallpaper.jpg',
                                                                SHARE + '/wallpaper.png') if os.path.exists(p)), None)
+    pb = None
     if path:
-        im = Image.open(path).convert('RGB')
-        s = max(w / im.width, h / im.height)
-        im = im.resize((math.ceil(im.width * s), math.ceil(im.height * s)), Image.BILINEAR)
-        l, t = (im.width - w) // 2, (im.height - h) // 2
-        im = im.crop((l, t, l + w, t + h))
-    else:
-        im = Image.new('RGB', (w, h), (30, 22, 70))
-    small = im.resize((max(1, w // 4), max(1, h // 4)), Image.BILINEAR).filter(ImageFilter.GaussianBlur(4))
-    return surface_from(im), surface_from(small.resize((w, h), Image.BILINEAR))
+        try: pb = GdkPixbuf.Pixbuf.new_from_file(path)
+        except Exception: pb = None
+    if pb is None:
+        pb = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, False, 8, w, h); pb.fill(0x1e1646ff)
+    s = max(w / pb.get_width(), h / pb.get_height())
+    sw_, sh_ = max(w, math.ceil(pb.get_width() * s)), max(h, math.ceil(pb.get_height() * s))
+    pb = pb.scale_simple(sw_, sh_, GdkPixbuf.InterpType.BILINEAR)
+    pb = pb.new_subpixbuf((sw_ - w) // 2, (sh_ - h) // 2, w, h)
+    small = pb.scale_simple(max(1, w // 8), max(1, h // 8), GdkPixbuf.InterpType.HYPER)          # 1/8: averages 8x8 blocks
+    small = small.scale_simple(max(1, w // 24), max(1, h // 24), GdkPixbuf.InterpType.HYPER)     # 1/24: soft glass
+    blur = small.scale_simple(w, h, GdkPixbuf.InterpType.BILINEAR)
+    return Gdk.cairo_surface_create_from_pixbuf(pb, 1, None), Gdk.cairo_surface_create_from_pixbuf(blur, 1, None)
 
 
 def rrect(cr, x, y, w, h, r):
@@ -129,6 +126,8 @@ class Win(Gtk.Window):
         if self.wall is not None:
             ox, oy = self.origin
             cr.set_source_surface(self.wall, -ox, -oy); cr.paint()
+        extra = getattr(self, 'paint_extra', None)
+        if extra is not None: extra(cr)                      # animated sprites between the wallpaper and the widgets
         return Gtk.Window.do_draw(self, cr)
 
 
@@ -137,23 +136,46 @@ THEME = None
 
 def icon(names, px):
     names = [names] if isinstance(names, str) else names
-    for n in names:
-        try:
-            if THEME.has_icon(n):
-                return Gtk.Image.new_from_pixbuf(THEME.load_icon(n, px, Gtk.IconLookupFlags.FORCE_SIZE))
-        except Exception:
-            pass
+    pb, _ = load_icon_pixbuf(names, px)
+    if pb is not None: return Gtk.Image.new_from_pixbuf(pb)
     return Gtk.Image.new_from_icon_name('application-x-executable', Gtk.IconSize.DIALOG)
 
 
 _TILES = {}
+ICON_CACHE = os.path.join(os.path.expanduser('~'), '.cache', 'rembley', 'icons')
+TILE_VER = 'v2'
+
+
+def _cache_path(kind, name, px):
+    try:
+        th = Gtk.Settings.get_default().get_property('gtk-icon-theme-name') or 'x'
+    except Exception:
+        th = 'x'
+    return os.path.join(ICON_CACHE, '%s_%s_%s_%s_%d.png' % (kind, TILE_VER, th, name.replace('/', '_'), px))
+
+
+def load_icon_pixbuf(names, px):
+    """Theme icon as Pixbuf, rendered ONCE and kept as a PNG on disk (SVG rendering costs ~13 ms each on a fast PC, far more on the A53)."""
+    for n in names:
+        cp = _cache_path('i', n, px)
+        try:
+            if os.path.exists(cp): return GdkPixbuf.Pixbuf.new_from_file(cp), n
+        except Exception: pass
+        try:
+            if THEME.has_icon(n):
+                pb = THEME.load_icon(n, px, Gtk.IconLookupFlags.FORCE_SIZE)
+                try: os.makedirs(ICON_CACHE, exist_ok=True); pb.savev(cp, 'png', [], [])
+                except Exception: pass
+                return pb, n
+        except Exception: pass
+    return None, None
 
 
 def _dominant_hue(pb):
     """(hue, saturation) of the most colourful part of an icon pixbuf; greys fall back to a violet accent."""
     import colorsys
     sm = pb.scale_simple(12, 12, GdkPixbuf.InterpType.BILINEAR); px, n, rs = sm.get_pixels(), sm.get_n_channels(), sm.get_rowstride()
-    best, w_tot, hs, ss = 0, 0, 0.0, 0.0
+    w_tot, hs, ss = 0, 0.0, 0.0
     for y in range(12):
         for x in range(12):
             o = y * rs + x * n; r, g, b = px[o] / 255, px[o + 1] / 255, px[o + 2] / 255; a = px[o + 3] / 255 if n == 4 else 1
@@ -169,12 +191,14 @@ def tile_icon(names, px):
     names = [names] if isinstance(names, str) else names
     key = (tuple(names), px)
     if key in _TILES: return Gtk.Image.new_from_surface(_TILES[key])
-    pb = None
-    for n in names:
-        try:
-            if THEME.has_icon(n): pb = THEME.load_icon(n, int(px * 0.62), Gtk.IconLookupFlags.FORCE_SIZE); break
-        except Exception: pass
+    tp = _cache_path('t', names[0], px)
+    try:                                            # finished tile cached on disk by an earlier run
+        if os.path.exists(tp):
+            _TILES[key] = cairo.ImageSurface.create_from_png(tp); return Gtk.Image.new_from_surface(_TILES[key])
+    except Exception: pass
+    pb, used = load_icon_pixbuf(names, int(px * 0.62))
     if pb is None: return icon(names, px)
+    tp = _cache_path('t', used, px)
     h, sat = _dominant_hue(pb)
     sf = cairo.ImageSurface(cairo.FORMAT_ARGB32, px, px); cr = cairo.Context(sf)
     r = px * 0.27
@@ -190,6 +214,8 @@ def tile_icon(names, px):
     off = (px - pb.get_width()) / 2
     Gdk.cairo_set_source_pixbuf(cr, pb, off, off - px * 0.01); cr.paint()
     _TILES[key] = sf
+    try: os.makedirs(ICON_CACHE, exist_ok=True); sf.write_to_png(tp)
+    except Exception: pass
     return Gtk.Image.new_from_surface(sf)
 
 
@@ -200,11 +226,55 @@ def appicon(names, px):
     return icon(names, px) if flat else tile_icon(names, px)
 
 
-def sh(cmd):
+def _low_priority():
+    """Child setup: programs started from the desktop run at lower CPU/IO priority than Xorg, the window manager and this shell,
+    so one heavy app cannot freeze the touch UI."""
     try:
-        subprocess.Popen(cmd, shell=True, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        os.nice(10)
+        import platform
+        nr = {'armv7l': 314, 'armv8l': 314, 'aarch64': 30, 'x86_64': 251}.get(platform.machine())
+        if nr:
+            import ctypes
+            ctypes.CDLL(None, use_errno=True).syscall(nr, 1, 0, (2 << 13) | 6)     # ioprio_set(IOPRIO_WHO_PROCESS, self, best-effort level 6)
     except Exception:
         pass
+
+
+def sh(cmd):
+    try:
+        subprocess.Popen(cmd, shell=True, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=_low_priority)
+    except Exception:
+        pass
+
+
+def launch_gapp(app):
+    """Start a Gio.DesktopAppInfo through sh() so it gets the low priority above (Terminal=true apps go through Gio's own launcher)."""
+    try:
+        cmd = re.sub(r'%[a-zA-Z%]', '', app.get_commandline() or '').strip()
+        if cmd and not app.get_boolean('Terminal'):
+            sh(cmd); return
+    except Exception:
+        pass
+    app.launch([], None)
+
+
+def motion_mode():
+    """'full' | 'reduced' | 'off' (Settings -> Screen -> Animations)."""
+    try:
+        v = open(CFG + '/motion').read().strip()
+        return v if v in ('full', 'reduced', 'off') else 'full'
+    except OSError:
+        return 'full'
+
+
+def system_busy():
+    """True when animations should stand down: high load, battery saver, or low battery."""
+    try:
+        if os.path.exists('/run/rembley/eco'): return True
+        if float(open('/proc/loadavg').read().split()[0]) > 1.6: return True
+    except Exception:
+        pass
+    return False
 
 
 def out(cmd, t=3):

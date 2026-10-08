@@ -38,7 +38,7 @@ PKGS_DESK="xserver-xorg-core xserver-xorg-video-fbdev xserver-xorg-input-libinpu
  xfwm4 xfce4-settings xfce4-terminal xfce4-taskmanager xfce4-appfinder thunar mousepad dbus-x11 \
  python3-gi python3-gi-cairo gir1.2-gtk-3.0 python3-pil wmctrl playerctl onboard \
  fonts-noto-core fonts-dejavu-core papirus-icon-theme adwaita-icon-theme gtk2-engines-pixbuf \
- libglib2.0-bin netsurf-gtk geany galculator mpv gpicview atril audacious file-roller \
+ libglib2.0-bin qt5-gtk-platformtheme libfuse2 squashfs-tools desktop-file-utils shared-mime-info netsurf-gtk geany galculator mpv gpicview atril audacious file-roller \
  dunst libnotify-bin xprintidle scrot x11-xkb-utils xdg-utils"
 chroot "$R" /usr/bin/env DEBIAN_FRONTEND=noninteractive sh -ec "
   apt-get update
@@ -51,9 +51,11 @@ chroot "$R" /usr/bin/env DEBIAN_FRONTEND=noninteractive sh -ec "
 rm -f "$R/usr/sbin/policy-rc.d"
 
 # overlay LAST so our /sbin/init replaces systemd's
+find "$HERE/rootfs/overlay" -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null   # never ship the host's bytecode
 rm -f "$R/usr/sbin/init" "$R/sbin/init"   # was a symlink to systemd; never write through it
 cp -a --remove-destination "$HERE/rootfs/overlay/." "$R/"
-chroot "$R" glib-compile-schemas --strict /usr/share/glib-2.0/schemas   # Onboard auto-show + docking defaults (99_rembley override)
+chroot "$R" glib-compile-schemas --strict /usr/share/glib-2.0/schemas
+chroot "$R" sh -c "update-desktop-database /usr/share/applications; update-mime-database /usr/share/mime" >/dev/null 2>&1 || true   # Onboard auto-show + docking defaults (99_rembley override)
 rm -f "$R/etc/X11/xorg.conf.d/20-touch.conf" "$R/etc/X11/xorg.conf.d/10-fbdev.conf"   # superseded by files generated at session start
 mkdir -p "$R/system/bin" "$R/var/log" "$R/run/user" "$R/root/Projects"
 ln -sf /bin/busybox "$R/sbin/mdev"
@@ -61,6 +63,7 @@ if [ -f "$OUT/android-blobs.tar.gz" ]; then      # Wi-Fi/BT/modem blobs from the
   echo "== adding android blobs"; tar -xzf "$OUT/android-blobs.tar.gz" -C "$R"
 else echo "NOTE: out/android-blobs.tar.gz not found -> no Wi-Fi/BT/SIM (see docs/NETWORK.md)"; fi
 ln -sf /bin/sh "$R/system/bin/sh"        # adbd (started by stage 1) expects /system/bin/sh
+chroot "$R" python3 -m compileall -q /usr/local/lib/rembley     # cached .pyc: faster desktop start on the slow CPU
 date +%s > "$R/etc/rembley/buildtime"
 chmod +x "$R/usr/sbin/init" "$R"/usr/local/bin/rembley-* "$R"/etc/rembley/rc.d/*.sh "$R/etc/rembley/udhcpc.script"; [ -e "$R/sbin/init" ] || ln -s /usr/sbin/init "$R/sbin/init"
 cleanup; trap - EXIT

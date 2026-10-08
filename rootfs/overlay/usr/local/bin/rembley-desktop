@@ -8,4 +8,8 @@ onboard 2>/dev/null &                                  # on-screen keyboard: aut
 rembley-touchd >/var/log/rembley-touchd.log 2>&1 &            # long-press = right click, edge swipes
 rembley-power >/var/log/rembley-power.log 2>&1 &       # screen dim/off, power key, low battery, clock stamp
 sleep 1
+# UI first: Xorg, window manager, keyboard and shell outrank applications (apps are started at nice +10 / low IO priority)
+renice -n -8 -p $(pidof Xorg) >/dev/null 2>&1; ionice -c2 -n0 -p $(pidof Xorg) >/dev/null 2>&1
+for n in xfwm4 onboard rembley-touchd; do renice -n -5 -p $(pidof "$n") >/dev/null 2>&1; done
+renice -n -5 -p $$ >/dev/null 2>&1; ionice -c2 -n0 -p $$ >/dev/null 2>&1       # the shell (exec below keeps this pid) and what it starts inherit, apps add +10
 exec /usr/local/bin/rembley-shell
