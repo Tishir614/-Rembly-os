@@ -309,7 +309,9 @@ class Launcher(Win):
         self.apps = sorted((a for a in Gio.AppInfo.get_all() if a.should_show()), key=lambda a: a.get_name().lower())
 
     def show_cat(self, cat):
-        self.cat = cat; self.search.set_text(''); self.fill(); self.show_all(); self.present()
+        self.cat = cat; self.search.set_text(''); self.fill()
+        self.fb.set_can_focus(True); self.set_focus(self.fb)           # focus the grid BEFORE mapping: a focused search box would pop the keyboard up
+        self.show_all(); self.present()
 
     def close_(self):
         osk(False); self.hide()
@@ -453,8 +455,9 @@ class Switcher(Win):
         n = 0
         for line in out('wmctrl -l -x', 2).splitlines():
             p = line.split(None, 4)
-            if len(p) < 5 or p[1] == '-1' or p[2].lower().startswith(('rembley', 'xfce4-panel', 'desktop')) or not p[4].strip(): continue
+            if len(p) < 5 or p[1] == '-1' or p[2].lower().startswith(('rembley-shell', 'xfce4-panel', 'onboard', 'desktop')) or not p[4].strip(): continue
             wid, cls, title = p[0], p[2].split('.')[0].lower(), p[4]
+            cls = {'rembley-store': 'softwarecenter', 'rembley-settings': 'preferences-system', 'rembley-netui': 'network-wireless', 'rembley-touchtest': 'input-tablet', 'rembley-lock': 'system-lock-screen', 'xfce4-terminal': 'utilities-terminal', 'thunar': 'system-file-manager'}.get(cls, cls)
             n += 1
             card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6); card.set_border_width(8)
             b = Gtk.Button(); b.set_relief(Gtk.ReliefStyle.NONE); b.get_style_context().add_class('tile')
@@ -608,7 +611,7 @@ def automax_start():
             types = x.window_types(wid)
             if '_NET_WM_WINDOW_TYPE_NORMAL' in types or not types:
                 cls = out('xprop -id %d WM_CLASS' % wid, 2).lower()
-                if not any(k in cls for k in ('rembley', 'onboard', 'dunst', 'xfce4-notifyd')):
+                if not any(k in cls for k in ('rembley-shell', 'onboard', 'dunst', 'xfce4-notifyd')):
                     sh('wmctrl -i -r 0x%x -b add,maximized_vert,maximized_horz' % wid)
         seen.clear(); seen.update(ids)
         return True
