@@ -10,7 +10,7 @@
 #        rembley-net wifi-select SSID   (saved network)
 #        rembley-net usb-ppp on|off     (IP over USB: CDC-ACM serial + PPP, because the kernel has no RNDIS/ECM)
 #        rembley-net bt-up              (explains why Bluetooth is unavailable with this kernel)
-#        rembley-net nvdata | firmware | diag | modem-probe | modem-up | modem-down | status
+#        rembley-net debug | heal | nvdata | firmware | diag | modem-probe | modem-up | modem-down | status
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 CONF=/etc/wpa_supplicant/rembley.conf; IF=${WIFI_IF:-wlan0}
 SYSFS=${SYSFS:-/sys}
@@ -57,8 +57,14 @@ firmware() {   # kernel request_firmware() looks in /etc/firmware, /vendor/firmw
 wmt_try() {   # $1 = launcher args; returns 0 when wlan0 shows up
   pkill wmt_launcher 2>/dev/null; sleep 1
   log "wmt_launcher $1"
-  # shellcheck disable=SC2086
-  setsid /system/bin/wmt_launcher $1 >/var/log/wmt_launcher.log 2>&1 </dev/null &
+  if [ -n "$TRACE" ] && command -v strace >/dev/null; then
+    # evidence for the self-healing step: every file the launcher tried (and failed) to open
+    # shellcheck disable=SC2086
+    setsid strace -f -qq -e trace=file,execve -s 200 -o /var/log/wmt.strace /system/bin/wmt_launcher $1 >/var/log/wmt_launcher.log 2>&1 </dev/null &
+  else
+    # shellcheck disable=SC2086
+    setsid /system/bin/wmt_launcher $1 >/var/log/wmt_launcher.log 2>&1 </dev/null &
+  fi
   sleep 3
   pidof wmt_launcher >/dev/null || { log "wmt_launcher exited, see /var/log/wmt_launcher.log"; return 1; }
   for n in 1 2 3 4 5 6; do [ -e /dev/wmtWifi ] && break; mdev -s; sleep 1; done
@@ -68,14 +74,21 @@ wmt_try() {   # $1 = launcher args; returns 0 when wlan0 shows up
   return 1
 }
 
+nodes_check() {   # the combo-chip character devices the helpers talk to (created from sysfs by mdev)
+  for n in wmtdetect stpwmt wmtWifi; do [ -e /dev/$n ] || log "WARNING: /dev/$n missing (kernel combo driver not registered? check: ls /sys/class/misc)"; done
+}
+
 wmt_start() {
   [ -x /system/bin/wmt_launcher ] || { log "no /system/bin/wmt_launcher: run tools/make-blobs.sh on your PC (docs/NETWORK.md)"; return 1; }
   [ -e /system/bin/linker ] || log "WARNING: /system/bin/linker missing, android binaries cannot start"
   mkdir -p /dev/socket /data/misc /var/log
   mdev -s; nvdata; firmware
   FW=$(fwdir); log "firmware dir: $FW"
+  nodes_check
   if [ -x /system/bin/wmt_loader ]; then
-    a=$(rc_args wmt_loader); /system/bin/wmt_loader $a >/var/log/wmt_loader.log 2>&1 && log "wmt_loader ok"
+    a=$(rc_args wmt_loader)
+    if [ -n "$TRACE" ] && command -v strace >/dev/null; then strace -f -qq -e trace=file,execve -s 200 -o /var/log/wmt.loader.strace /system/bin/wmt_loader $a >/var/log/wmt_loader.log 2>&1 && log "wmt_loader ok"
+    else /system/bin/wmt_loader $a >/var/log/wmt_loader.log 2>&1 && log "wmt_loader ok"; fi
   fi
   if [ -n "$WMT_ARGS" ]; then wmt_try "$WMT_ARGS"; return $?; fi
   RA=$(rc_args wmt_launcher)
@@ -84,8 +97,24 @@ wmt_start() {
   return 1
 }
 
+bringup_with_heal() {
+  round=1; max=${HEAL_ROUNDS:-4}
+  while [ "$round" -le "$max" ]; do
+    log "bring-up attempt $round of $max"
+    TRACE=""; [ "$round" -ge 2 ] && TRACE=1
+    wmt_start && return 0
+    [ "$round" -ge "$max" ] && break
+    log "attempt $round failed: looking for causes that can be repaired automatically (missing files/libraries/firmware)"
+    : > /var/log/wmt.strace.tmp 2>/dev/null; rm -f /var/log/wmt.strace.tmp
+    if python3 /usr/local/lib/rembley/rembley_heal.py >>/var/log/rembley-heal.log 2>&1; then log "repaired something, trying again"
+    else log "nothing repairable found in the logs"; [ "$round" -ge 2 ] && break; fi
+    pkill wmt_launcher 2>/dev/null; round=$((round + 1))
+  done
+  return 1
+}
+
 wifi_up() {
-  [ -d $SYSFS/class/net/$IF ] || wmt_start || { log "$IF did not appear (see /var/log/wmt_launcher.log, dmesg | grep -iE 'wmt|wlan|conn')"; return 1; }
+  [ -d $SYSFS/class/net/$IF ] || bringup_with_heal || { log "$IF did not appear (see /var/log/wmt_launcher.log, dmesg | grep -iE 'wmt|wlan|conn')"; return 1; }
   ip link set $IF up 2>&1
   rfkill unblock all 2>/dev/null
   [ -f $CONF ] || { mkdir -p /etc/wpa_supplicant; printf 'ctrl_interface=/run/wpa_supplicant\nupdate_config=1\ncountry=%s\n' "${COUNTRY:-US}" > $CONF; }
@@ -188,5 +217,14 @@ C
     sleep 15; ip -4 addr show ppp0 | grep inet || { log "ppp0 not up, see /var/log/ppp.log"; exit 1; } ;;
   modem-down) pkill pppd ;;
   status) "$0" wifi-status; wifi_mac_report; ip -4 addr show ppp0 2>/dev/null | grep inet ;;
+  heal) python3 /usr/local/lib/rembley/rembley_heal.py ;;
+  debug)   # one-stop Wi-Fi diagnosis: runs the bring-up (with self-repair) and prints every piece of evidence in one place
+    echo "=== bring-up"; HEAL_ROUNDS=${HEAL_ROUNDS:-4} wifi_up; echo "exit=$?"
+    echo; echo "=== wmt_launcher / wmt_loader output"; tail -n 30 /var/log/wmt_launcher.log /var/log/wmt_loader.log 2>&1
+    echo; echo "=== files the helpers could not open (strace)"; cat /var/log/wmt.strace /var/log/wmt.loader.strace 2>/dev/null | grep ENOENT | sed -n 's/.*"\([^"]*\)".*/\1/p' | sort -u | head -40
+    echo; echo "=== repairs made"; cat /var/log/rembley-heal.log 2>&1 | tail -n 30
+    echo; echo "=== kernel"; dmesg | grep -iE 'wmt|wlan|conn|stp|firmware|nvram|mtk_wifi' | tail -n 40
+    echo; echo "=== devices"; ls -l /dev/wmt* /dev/stp* 2>&1; ls /sys/class/misc 2>&1 | tr '\n' ' '; echo
+    echo; echo "=== interface"; ip -br link 2>&1; wifi_mac_report ;;
   *) sed -n '2,18p' "$0"; exit 1 ;;
 esac

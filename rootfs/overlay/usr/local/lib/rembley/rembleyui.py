@@ -338,6 +338,26 @@ class Avatar(Gtk.DrawingArea):
             cr.move_to(cx + sgn * r * .62, cy - r * .1); cr.line_to(cx + sgn * r * .5, cy - r * .85); cr.line_to(cx + sgn * r * .1, cy - r * .5); cr.close_path(); cr.fill()
 
 
+def install_crash_handler():
+    """Uncaught exceptions in any Rembley program: full traceback into /var/log/rembley-crash.log + one notification (rate-limited)."""
+    import traceback
+    name = os.path.basename(sys.argv[0]) if sys.argv and sys.argv[0] else 'rembley'
+    prev, last = sys.excepthook, [0.0]
+
+    def hook(et, ev, tb):
+        try:
+            with open('/var/log/rembley-crash.log', 'a') as f:
+                f.write('\n==== %s %s\n%s' % (time.strftime('%F %T'), name, ''.join(traceback.format_exception(et, ev, tb))))
+            if time.time() - last[0] > 30:
+                last[0] = time.time()
+                subprocess.Popen(['notify-send', '-u', 'critical', 'Ошибка в %s' % name, 'Подробности: /var/log/rembley-crash.log (их соберёт rembley-report)'],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+        prev(et, ev, tb)
+    sys.excepthook = hook
+
+
 def init_theme():
     """Call once after Gtk is loaded: dark theme, no animations, icon theme handle, CSS."""
     global THEME
@@ -348,6 +368,7 @@ def init_theme():
         for k, v in (('gtk-theme-name', 'Adwaita'), ('gtk-icon-theme-name', 'Papirus-Dark'), ('gtk-font-name', 'Noto Sans 11')):
             try: s.set_property(k, v)
             except Exception: pass
+    install_crash_handler()
     THEME = Gtk.IconTheme.get_default()
     p = Gtk.CssProvider(); p.load_from_data(CSS)
     Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), p, Gtk.STYLE_PROVIDER_PRIORITY_USER)

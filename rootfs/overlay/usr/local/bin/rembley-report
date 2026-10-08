@@ -25,7 +25,15 @@ s wifi_diag 'rembley-net diag'
 s partnames 'for u in /sys/class/block/mmcblk0p*/uevent; do echo "$(basename $(dirname $u)) $(grep PARTNAME $u)"; done; mount | grep -E "nvdata|nvram|protect"; ls /nvdata/APCFG/APRDEB 2>&1 | head -30   # NAMES ONLY: nvram contents are never copied (IMEI/MAC)'
 s audio 'aplay -l; amixer scontrols; cat /proc/asound/cards'
 s usb 'ls /sys/class/android_usb/android0; cat /sys/class/android_usb/android0/state 2>&1; cat /tmp/adbd.log 2>&1'
+s selftest 'rembley-selftest'
+s drivers 'rembley-drivers status; ls /var/lib/rembley; cat /var/lib/rembley/drivers.json'
+s heal 'cat /var/log/rembley-heal.log /var/log/rembley-crash.log /var/log/rembley-drivers.log'
+s wmtstrace 'cat /var/log/wmt.strace /var/log/wmt.loader.strace | grep -c . ; cat /var/log/wmt.strace /var/log/wmt.loader.strace | grep ENOENT | sed -n "s/.*\"\\([^\"]*\\)\".*/\\1/p" | sort -u | head -60'
 cp /tmp/hwreport.txt $D/stage1-hwreport.txt 2>/dev/null
 tar -czf $OUT -C /tmp rembley-report-$TS && rm -rf $D
 echo "Report: $OUT ($(du -h $OUT | cut -f1))"
-echo "Get it with:  adb pull $OUT   (or copy from the USB stick)"
+# --usb: also copy onto the first removable medium (handy when adb is not available)
+case "$1" in --usb)
+  for m in /media/* /mnt/usb* /run/media/*/*; do [ -d "$m" ] && [ -w "$m" ] && { cp "$OUT" "$m/" && echo "also copied to $m/" && break; }; done ;;
+esac
+echo "Get it with:  adb pull $OUT   (or copy from the USB stick; or run: rembley-report --usb)"

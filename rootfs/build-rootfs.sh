@@ -41,7 +41,7 @@ printf '#!/bin/sh\nexit 101\n' > "$R/usr/sbin/policy-rc.d"; chmod +x "$R/usr/sbi
 
 PKGS_MIN="git python3 python3-pip python3-venv build-essential cmake make gdb nodejs wget curl htop tmux vim-tiny rsync zip unzip \
  openssh-client neofetch bluez usbutils net-tools wpasupplicant iw rfkill ppp wireless-tools earlyoom \
- tzdata locales ncdu mc alsa-utils"
+ tzdata locales ncdu mc alsa-utils strace"
 # Light desktop: Xorg + xfwm4 (no compositor) + our own GTK shell instead of full XFCE session/panel/xfdesktop.
 PKGS_DESK="xserver-xorg-core xserver-xorg-video-fbdev xserver-xorg-input-libinput xinit x11-xserver-utils x11-utils xinput unclutter \
  xfwm4 xfce4-settings xfce4-terminal xfce4-taskmanager xfce4-appfinder thunar mousepad dbus-x11 \
