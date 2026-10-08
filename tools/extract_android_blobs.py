@@ -11,9 +11,9 @@ import argparse, io, os, re, shutil, struct, subprocess, sys, tarfile, tempfile
 
 BIN_RE = re.compile(r'^(wmt|conn|6620|6630|mt66|ccci|md_|mdlogger|emdlogger|rild|mtkrild|ril|gsm0710|nvram|nvram_daemon|'
                     r'atci|atcid|wlan|wifi|connsys|hostapd|wpa_|bt_|bluetooth|gps|mtk_agpsd|mnld|linker)', re.I)
-FW_RE = re.compile(r'(wmt|WMT|wifi|WIFI|wlan|WLAN|mt66|MT66|mt6735|MT6735|soc|SOC|ROM|patch|PATCH|md1|md3|modem|MODEM|'
+FW_RE = re.compile(r'(wmt|WMT|wifi|WIFI|wlan|WLAN|mt66|MT66|mt6735|MT6735|mt6625|MT6625|soc|SOC|ROM|patch|PATCH|md1|md3|modem|MODEM|gps|GPS|mnl|fm_|FM_|'
                    r'dsp|DSP|\.cfg|\.bin|\.img|\.dat|bt_|BT_|conn)')
-DIRS_COPY = ['etc/wifi', 'etc/firmware', 'firmware', 'etc/bluetooth', 'etc/mddb', 'etc/ril']   # relative to partition root
+DIRS_COPY = ['etc/wifi', 'etc/firmware', 'firmware', 'etc/bluetooth', 'etc/mddb', 'etc/ril', 'etc/init']   # relative to partition root
 LIBDIRS = ['system/lib', 'vendor/lib']
 
 
@@ -104,9 +104,13 @@ def main():
                     full = cur + '/' + n
                     if sz > a.max_mb * 2 ** 20 and not re.search(r'md1|md3|modem|MODEM', n): print('  skip (too big, %d MB): %s' % (sz // 2 ** 20, full)); continue
                     if (mode & 0o170000) == 0o040000: stack.append(full)
-                    elif (mode & 0o170000) == 0o100000 and (FW_RE.search(n) or 'wifi' in cur or 'bluetooth' in cur):
+                    elif (mode & 0o170000) == 0o100000 and (FW_RE.search(n) or 'wifi' in cur or 'bluetooth' in cur or (cur.endswith('etc/init') or '/etc/init/' in cur) and n.endswith('.rc')):
                         rel = full[len(pre):].lstrip('/')
                         if dump(img, full, os.path.join(stage, part, rel)): print('  data', part, rel)
+        for n, mode, _, sz in ls(img, '%s/etc' % pre):       # fstab/ueventd: partition map + device permissions
+            if (mode & 0o170000) == 0o100000 and (n.startswith('fstab') or n.startswith('ueventd')) and sz < 1 << 20:
+                rel = 'etc/' + n
+                if dump(img, '%s/%s' % (pre, rel), os.path.join(stage, part, rel)): print('  conf', part, rel)
     # 2. library closure
     libidx = {}
     for part, img, pre in imgs:

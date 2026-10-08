@@ -21,6 +21,8 @@ s xorg 'cat /var/log/rembley-x.log; xrandr 2>&1; xinput list 2>&1'
 s xconf 'cat /etc/X11/xorg.conf.d/*.conf; cat /etc/rembley/*.conf'
 s procs 'ps aux; top -bn1 | head -25'
 s modem 'rembley-net modem-probe'
+s wifi_diag 'rembley-net diag'
+s partnames 'for u in /sys/class/block/mmcblk0p*/uevent; do echo "$(basename $(dirname $u)) $(grep PARTNAME $u)"; done; mount | grep -E "nvdata|nvram|protect"; ls /nvdata/APCFG/APRDEB 2>&1 | head -30   # NAMES ONLY: nvram contents are never copied (IMEI/MAC)'
 s audio 'aplay -l; amixer scontrols; cat /proc/asound/cards'
 s usb 'ls /sys/class/android_usb/android0; cat /sys/class/android_usb/android0/state 2>&1; cat /tmp/adbd.log 2>&1'
 cp /tmp/hwreport.txt $D/stage1-hwreport.txt 2>/dev/null

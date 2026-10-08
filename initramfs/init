@@ -40,6 +40,7 @@ REPORT=/tmp/hwreport.txt
     echo "fb0.$f=$(cat /sys/class/graphics/fb0/$f 2>/dev/null)"; done
   echo "== input";     cat /proc/bus/input/devices
   echo "== partitions"; cat /proc/partitions
+  echo "== partition names"; for u in /sys/class/block/mmcblk0p*/uevent; do echo "$(basename $(dirname $u)) $(grep PARTNAME $u)"; done
   echo "== filesystems"; cat /proc/filesystems
   echo "== usb gadget"; ls /sys/class/android_usb/android0 2>&1
 } >$REPORT 2>&1
