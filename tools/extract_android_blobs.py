@@ -35,15 +35,19 @@ def ls(img, d):
     for line in dbg(img, 'ls -p %s' % d).splitlines():
         p = line.split('/')
         if len(p) >= 7 and p[5] not in ('.', '..', ''):
-            out.append((p[5], int(p[2], 8), p[1]))
+            out.append((p[5], int(p[2], 8), p[1], int(p[6]) if len(p) > 6 and p[6].isdigit() else 0))
     return out
 
 
 def root_of(img):
-    return '/system' if any(n == 'bin' for n, _, _ in ls(img, '/system')) else ''
+    return '/system' if any(n == 'bin' for n, _, _, _ in ls(img, '/system')) else ''
+
+
+LISTONLY = False
 
 
 def dump(img, src, dst):
+    if LISTONLY: return True
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     dbg(img, 'dump -p %s %s' % (src, dst))
     return os.path.exists(dst) and os.path.getsize(dst) > 0
@@ -75,7 +79,10 @@ def needed(path):
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument('images', nargs='+'); ap.add_argument('-o', default='out/android-blobs.tar.gz')
+    ap.add_argument('--list', action='store_true', help='only print what was found (extracts nothing, writes no tarball)')
+    ap.add_argument('--max-mb', type=int, default=40, help='skip data files bigger than this (modem images exempt)')
     a = ap.parse_args()
+    global LISTONLY; LISTONLY = a.list
     tmp = tempfile.mkdtemp(prefix='a73blobs-'); stage = os.path.join(tmp, 'stage'); os.makedirs(stage)
     imgs = []
     for p in a.images:
@@ -85,7 +92,7 @@ def main():
     got = []
     for part, img, pre in imgs:                       # 1. binaries + config/firmware dirs
         for sub in ('bin', 'xbin'):
-            for n, mode, _ in ls(img, '%s/%s' % (pre, sub)):
+            for n, mode, _, _sz in ls(img, '%s/%s' % (pre, sub)):
                 if (mode & 0o170000) == 0o100000 and BIN_RE.match(n):
                     dst = os.path.join(stage, part, sub, n)
                     if dump(img, '%s/%s/%s' % (pre, sub, n), dst): got.append(dst); print('  bin', part, sub, n)
@@ -93,8 +100,9 @@ def main():
             stack = ['%s/%s' % (pre, d)]
             while stack:
                 cur = stack.pop()
-                for n, mode, _ in ls(img, cur):
+                for n, mode, _, sz in ls(img, cur):
                     full = cur + '/' + n
+                    if sz > a.max_mb * 2 ** 20 and not re.search(r'md1|md3|modem|MODEM', n): print('  skip (too big, %d MB): %s' % (sz // 2 ** 20, full)); continue
                     if (mode & 0o170000) == 0o040000: stack.append(full)
                     elif (mode & 0o170000) == 0o100000 and (FW_RE.search(n) or 'wifi' in cur or 'bluetooth' in cur):
                         rel = full[len(pre):].lstrip('/')
@@ -103,7 +111,7 @@ def main():
     libidx = {}
     for part, img, pre in imgs:
         for d in ('lib', ):
-            for n, mode, _ in ls(img, '%s/%s' % (pre, d)): libidx.setdefault(n, (part, img, '%s/%s/%s' % (pre, d, n)))
+            for n, mode, _, _sz in ls(img, '%s/%s' % (pre, d)): libidx.setdefault(n, (part, img, '%s/%s/%s' % (pre, d, n)))
     todo, seen = [p for p in got], set()
     while todo:
         for lib in needed(todo.pop()):
@@ -113,11 +121,21 @@ def main():
                 part, img, src = libidx[lib]; dst = os.path.join(stage, part, 'lib', lib)
                 if dump(img, src, dst): todo.append(dst)
             else: print('  note: %s not found in images (may be a plain Linux lib)' % lib)
+    if a.list:
+        print('\n--list: nothing written. Found %d connectivity binaries.' % len(got)); return
     if not got:
         sys.exit('No connectivity binaries found. Is this the right system/vendor image? (try: debugfs -R "ls /system/bin" system.bin)')
     # android linker is a symlink to /system/bin/linker (32-bit); make sure the 32-bit one is there
+    man = os.path.join(stage, 'MANIFEST.txt')
+    with open(man, 'w') as f:
+        for root, _, files in os.walk(stage):
+            for fn in sorted(files):
+                fp = os.path.join(root, fn)
+                if fp != man: f.write('%10d  %s\n' % (os.path.getsize(fp), os.path.relpath(fp, stage)))
+    print(open(man).read())
     os.makedirs(os.path.dirname(a.o) or '.', exist_ok=True)
     with tarfile.open(a.o, 'w:gz') as t:
+        t.add(man, arcname='MANIFEST.txt')
         for part in ('system', 'vendor'):
             p = os.path.join(stage, part)
             if os.path.isdir(p): t.add(p, arcname=part)

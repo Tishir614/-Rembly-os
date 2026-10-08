@@ -6,6 +6,14 @@ but they only come alive after Android userspace helpers load the firmware: `wmt
 (for the modem `ccci_*`/`rild`-style helpers). Those helpers and firmware are proprietary files that live in
 **your** `system.bin` / `vendor.bin`, so they are not shipped here.
 
+## Quick start (on your PC, 3 commands)
+```
+sudo apt install e2fsprogs android-sdk-libsparse-utils
+tools/make-blobs.sh /home/tishir645/планшет          # folder with system.bin (+ vendor.bin)
+git add -f out/android-blobs*; git commit -m "android blobs"; git push    # so they can be reviewed
+```
+The tool first prints what it found (`--list`), then writes `out/android-blobs.tar.gz` (+ manifest).
+
 ## 1. Extract them from your own dump (on your PC, no root, nothing is modified)
 ```
 sudo apt install e2fsprogs android-sdk-libsparse-utils      # debugfs, simg2img
