@@ -61,6 +61,7 @@ def entry_dialog(parent, title, secret=False, text=''):
 class Settings(Gtk.Window):
     def __init__(self):
         super().__init__(title='Настройки Rembley'); self.set_default_size(1100, 660); self.set_position(Gtk.WindowPosition.CENTER)
+        ui.style_app(self)
         hb = Gtk.Box(); self.add(hb); st = Gtk.Stack(); sb = Gtk.StackSidebar(); sb.set_stack(st); sb.set_size_request(230, -1)
         hb.pack_start(sb, False, False, 0); hb.pack_start(st, True, True, 0)
         for name, title, fn in (('profile', 'Профиль', self.p_profile), ('display', 'Экран и питание', self.p_display), ('sound', 'Звук', self.p_sound),

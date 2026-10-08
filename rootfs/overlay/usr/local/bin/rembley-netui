@@ -64,6 +64,7 @@ class PasswordDialog(Gtk.Dialog):
 class W(Gtk.Window):
     def __init__(self, page):
         super().__init__(title='Сеть'); self.set_default_size(1000, 640); self.maximize()
+        ui.style_app(self)
         nb = Gtk.Notebook(); self.add(nb); nb.set_tab_pos(Gtk.PositionType.TOP); self.nb = nb
         self.scan_busy = False
         # ---------------- Wi-Fi ----------------

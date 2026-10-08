@@ -61,6 +61,44 @@ label { color: #ece6ff; }
 .lockhello { font-size: 20px; color: #efe8ff; text-shadow: 0 0 10px rgba(120,90,220,0.9); }
 .lockhint { font-size: 15px; color: #cfc6ee; }
 .lockbtn { background-image: linear-gradient(90deg, rgba(196,120,196,0.75), rgba(120,92,205,0.65)); border: none; border-radius: 30px; color: #fff; font-size: 20px; min-height: 60px; padding: 0 40px; box-shadow: 0 0 22px rgba(160,110,255,0.55); }
+window.rapp { background-image: linear-gradient(160deg, #181038, #2a1a5e 55%, #3c206f); color: #f1ecff; }
+window.rapp label { color: #f1ecff; }
+window.rapp label.small, window.rapp .dim { color: #bfb4e8; }
+.rcard { background-image: linear-gradient(160deg, rgba(255,255,255,0.12), rgba(255,255,255,0.05)); border: 1px solid rgba(200,180,255,0.28); border-radius: 20px; padding: 14px; }
+.rcard-title { font-size: 17px; font-weight: 600; color: #fff; }
+.rcard-big { font-size: 30px; font-weight: 300; color: #fff; text-shadow: 0 0 14px rgba(170,140,255,0.8); }
+window.rapp button { background-image: linear-gradient(90deg, rgba(160,105,235,0.80), rgba(105,90,225,0.72)); border: none; border-radius: 16px; color: #fff; min-height: 44px; text-shadow: none; box-shadow: 0 3px 12px rgba(0,0,0,0.30); padding: 0 18px; font-weight: 500; }
+window.rapp button:hover { background-image: linear-gradient(90deg, rgba(185,130,255,0.92), rgba(125,110,245,0.85)); }
+window.rapp button:active { background-image: linear-gradient(90deg, rgba(220,150,255,1), rgba(150,130,255,1)); }
+window.rapp button:disabled { opacity: 0.45; }
+window.rapp button.flat, window.rapp .titlebutton { background-image: none; box-shadow: none; }
+window.rapp progressbar trough { background-color: rgba(255,255,255,0.12); border: none; border-radius: 10px; min-height: 14px; }
+window.rapp progressbar progress { background-image: linear-gradient(90deg, #8d6bff, #ff7ac6); border: none; border-radius: 10px; min-height: 14px; }
+window.rapp progressbar text { color: #fff; font-size: 12px; }
+window.rapp treeview, window.rapp treeview.view { background-color: transparent; color: #f1ecff; }
+window.rapp treeview.view:selected { background-image: linear-gradient(90deg, rgba(196,120,196,0.60), rgba(120,92,205,0.55)); color: #fff; }
+window.rapp treeview header button { background-image: none; background-color: rgba(255,255,255,0.08); border-radius: 0; box-shadow: none; min-height: 38px; font-weight: 600; }
+window.rapp textview, window.rapp textview text { background-color: rgba(10,6,30,0.45); color: #eae4ff; border-radius: 14px; }
+window.rapp scrolledwindow { border-radius: 16px; }
+window.rapp entry { background-color: rgba(255,255,255,0.10); color: #fff; border: 1px solid rgba(190,170,255,0.35); border-radius: 14px; min-height: 40px; }
+window.rapp stacksidebar { background-color: rgba(10,6,30,0.35); }
+window.rapp stacksidebar row { min-height: 52px; padding: 0 14px; border-radius: 14px; margin: 2px 8px; }
+window.rapp stacksidebar row:selected { background-image: linear-gradient(90deg, rgba(196,120,196,0.65), rgba(120,92,205,0.50)); }
+window.rapp stack { background-color: transparent; }
+window.rapp scale trough { background-color: rgba(255,255,255,0.15); border-radius: 8px; min-height: 8px; }
+window.rapp scale highlight { background-image: linear-gradient(90deg, #8d6bff, #ff7ac6); border-radius: 8px; }
+window.rapp scale slider { background-color: #fff; border-radius: 12px; min-width: 24px; min-height: 24px; }
+window.rapp list, window.rapp listbox, window.rapp viewport, window.rapp .frame { background-color: rgba(10,6,30,0.30); border-radius: 16px; border-color: transparent; }
+window.rapp list row, window.rapp listbox row { border-radius: 12px; min-height: 48px; margin: 3px 6px; padding: 2px 10px; background-color: rgba(255,255,255,0.06); }
+window.rapp list row:selected, window.rapp listbox row:selected { background-image: linear-gradient(90deg, rgba(196,120,196,0.60), rgba(120,92,205,0.55)); }
+window.rapp notebook > header { background-color: rgba(10,6,30,0.35); border: none; }
+window.rapp notebook > header > tabs > tab { padding: 10px 22px; border-radius: 12px 12px 0 0; color: #cfc6ee; }
+window.rapp notebook > header > tabs > tab:checked { background-image: linear-gradient(180deg, rgba(160,105,235,0.0), rgba(160,105,235,0.45)); color: #fff; box-shadow: inset 0 -3px 0 #c08cff; }
+window.rapp switch { background-color: rgba(255,255,255,0.18); border-radius: 16px; border: none; }
+window.rapp switch:checked { background-image: linear-gradient(90deg, #8d6bff, #ff7ac6); }
+window.rapp switch slider { background-color: #fff; border-radius: 14px; border: none; }
+window.rapp combobox button, window.rapp spinbutton button { min-height: 38px; }
+window.rapp checkbutton label { padding-left: 4px; }
 entry.rl-search { background-color: rgba(255,255,255,0.12); color: #fff; border-radius: 14px; border: 1px solid rgba(190,170,255,0.3); min-height: 38px; }
 """
 
@@ -384,6 +422,43 @@ def init_theme():
     THEME = Gtk.IconTheme.get_default()
     p = Gtk.CssProvider(); p.load_from_data(CSS)
     Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), p, Gtk.STYLE_PROVIDER_PRIORITY_USER)
+
+
+def style_app(win):
+    """Colourful app look (gradient background, rounded gradient buttons/bars/rows) for ordinary windows; needs init_theme() first."""
+    win.get_style_context().add_class('rapp')
+
+
+def card(title=None, spacing=8):
+    """Rounded translucent card; returns the box to pack into (the card widget itself is box.card)."""
+    b = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=spacing); b.get_style_context().add_class('rcard')
+    if title:
+        t = Gtk.Label(label=title, xalign=0); t.get_style_context().add_class('rcard-title'); b.pack_start(t, False, False, 0)
+    return b
+
+
+class Meter(Gtk.DrawingArea):
+    """Coloured bar with an icon dot, a title and a value: one per storage category / memory / load."""
+    def __init__(self, title, c1=(0.55, 0.42, 1.0), c2=(1.0, 0.48, 0.78), emoji=''):
+        super().__init__(); self.title, self.val, self.frac, self.c1, self.c2, self.emoji = title, '…', 0.0, c1, c2, emoji
+        self.set_size_request(-1, 64)
+
+    def set(self, frac, val):
+        self.frac, self.val = max(0.0, min(1.0, frac)), val; self.queue_draw()
+
+    def do_draw(self, cr):
+        w, h = self.get_allocated_width(), self.get_allocated_height()
+        cr.arc(24, 24, 18, 0, 6.2832); g = cairo.LinearGradient(6, 6, 42, 42); g.add_color_stop_rgb(0, *self.c1); g.add_color_stop_rgb(1, *self.c2); cr.set_source(g); cr.fill()
+        cr.select_font_face('Noto Sans', 0, 1); cr.set_font_size(18); cr.set_source_rgb(1, 1, 1)
+        e = cr.text_extents(self.emoji or self.title[:1]); cr.move_to(24 - e.width / 2 - e.x_bearing, 24 - e.height / 2 - e.y_bearing); cr.show_text(self.emoji or self.title[:1])
+        cr.select_font_face('Noto Sans', 0, 1); cr.set_font_size(15); cr.set_source_rgb(0.97, 0.95, 1); cr.move_to(54, 20); cr.show_text(self.title)
+        cr.select_font_face('Noto Sans', 0, 0); cr.set_font_size(14); cr.set_source_rgb(0.82, 0.77, 0.97)
+        e = cr.text_extents(self.val); cr.move_to(w - e.width - 4, 20); cr.show_text(self.val)
+        bx, by, bw, bh = 54, 32, w - 58, 14
+        rrect(cr, bx, by, bw, bh, 7); cr.set_source_rgba(1, 1, 1, 0.12); cr.fill()
+        if self.frac > 0:
+            fw = max(bh, bw * self.frac); rrect(cr, bx, by, fw, bh, 7)
+            g = cairo.LinearGradient(bx, 0, bx + bw, 0); g.add_color_stop_rgb(0, *self.c1); g.add_color_stop_rgb(1, *self.c2); cr.set_source(g); cr.fill()
 
 
 def screen_size():

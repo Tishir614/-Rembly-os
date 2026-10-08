@@ -23,29 +23,36 @@ def human(n):
         n /= 1024
 
 
+COLORS = [((0.40, 0.55, 1.0), (0.55, 0.85, 1.0)), ((1.0, 0.62, 0.30), (1.0, 0.85, 0.40)), ((0.75, 0.40, 1.0), (1.0, 0.50, 0.80)),
+          ((0.25, 0.80, 0.60), (0.55, 1.0, 0.75)), ((1.0, 0.40, 0.50), (1.0, 0.65, 0.55))]
+
+
 class Storage(Gtk.Window):
     def __init__(self):
-        super().__init__(title='Хранилище'); self.set_default_size(760, 640); self.set_position(Gtk.WindowPosition.CENTER); ui.init_theme()
-        v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10); v.set_border_width(16); self.add(v)
-        self.head = Gtk.Label(xalign=0); self.head.get_style_context().add_class('rl-title'); v.pack_start(self.head, False, False, 0)
-        self.total = Gtk.ProgressBar(show_text=True); v.pack_start(self.total, False, False, 0)
+        super().__init__(title='Хранилище'); self.set_default_size(820, 700); self.set_position(Gtk.WindowPosition.CENTER); ui.init_theme(); ui.style_app(self)
+        v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12); v.set_border_width(18); self.add(v)
+        top = ui.card(); v.pack_start(top, False, False, 0)
+        self.head = Gtk.Label(xalign=0); self.head.get_style_context().add_class('rcard-big'); top.pack_start(self.head, False, False, 0)
+        self.total = ui.Meter('Всего занято', (0.55, 0.42, 1.0), (1.0, 0.45, 0.60), 'Σ'); top.pack_start(self.total, False, False, 0)
+        grid = Gtk.Grid(row_spacing=12, column_spacing=12, column_homogeneous=True); v.pack_start(grid, False, False, 0)
         self.rows = {}
-        for name, _ in CATS:
-            b = Gtk.ProgressBar(show_text=True); b.set_text(name + ': считаю…'); v.pack_start(b, False, False, 0); self.rows[name] = b
-        t = Gtk.Label(label='Самые большие папки в домашнем каталоге:', xalign=0); v.pack_start(t, False, False, 6)
-        sc = Gtk.ScrolledWindow(); sc.set_vexpand(True); v.pack_start(sc, True, True, 0)
-        self.tv = Gtk.TextView(editable=False, monospace=True); sc.add(self.tv)
-        row = Gtk.Box(spacing=10); v.pack_start(row, False, False, 0)
+        for i, (name, _) in enumerate(CATS):
+            c = ui.card(); m = ui.Meter(name, *COLORS[i % len(COLORS)]); c.pack_start(m, False, False, 0); grid.attach(c, i % 2, i // 2, 1, 1); self.rows[name] = m
+        fc = ui.card('Самые большие папки в домашнем каталоге'); v.pack_start(fc, True, True, 0)
+        sc = Gtk.ScrolledWindow(); sc.set_vexpand(True); fc.pack_start(sc, True, True, 0)
+        self.tv = Gtk.TextView(editable=False, monospace=True, left_margin=10, top_margin=8); sc.add(self.tv)
+        row = Gtk.Box(spacing=12); v.pack_start(row, False, False, 0)
         for text, fn in (('Безопасная очистка', self.clean), ('Обновить', self.scan)):
             b = Gtk.Button(label=text); b.set_size_request(-1, 56); b.connect('clicked', lambda _b, f=fn: f()); row.pack_start(b, True, True, 0)
         self.connect('destroy', Gtk.main_quit); self.show_all(); self.scan()
 
     def scan(self):
         st = os.statvfs('/'); tot, free = st.f_blocks * st.f_frsize, st.f_bavail * st.f_frsize
-        self.head.set_text('Свободно %s из %s' % (human(free), human(tot))); self.total.set_fraction(1 - free / tot); self.total.set_text('занято %d%%' % round(100 * (1 - free / tot)))
+        self.head.set_text('Свободно %s' % human(free)); self.total.set(1 - free / tot, '%s из %s' % (human(tot - free), human(tot)))
+        used_b = max(1, tot - free)
         def work():
             for name, paths in CATS:
-                n = du(paths); GLib.idle_add(lambda name=name, n=n: (self.rows[name].set_fraction(min(1, n / tot)), self.rows[name].set_text('%s: %s' % (name, human(n)))))
+                n = du(paths); GLib.idle_add(lambda name=name, n=n: self.rows[name].set(min(1, n / used_b), human(n)))
             r = subprocess.run('nice -n 15 ionice -c3 du -xk --max-depth=1 /root 2>/dev/null | sort -rn | head -9', shell=True, capture_output=True, text=True).stdout
             lines = ['%10s  %s' % (human(int(a) * 1024), b) for a, b in (l.split('\t', 1) for l in r.splitlines() if '\t' in l)]
             GLib.idle_add(lambda: self.tv.get_buffer().set_text('\n'.join(lines)))

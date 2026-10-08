@@ -30,6 +30,7 @@ def installed(pkg):
 class Store(Gtk.Window):
     def __init__(self):
         super().__init__(title='Магазин Rembley'); self.set_default_size(1000, 680); self.set_position(Gtk.WindowPosition.CENTER)
+        ui.style_app(self)
         v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6); v.set_border_width(10); self.add(v)
         top = Gtk.Box(spacing=8); self.q = Gtk.SearchEntry(); self.q.set_placeholder_text('Поиск по всем пакетам Ubuntu')
         self.q.connect('activate', lambda *_: self.search()); self.q.connect('focus-in-event', lambda *_: osk(True))
