@@ -174,6 +174,19 @@ usb_ppp() {
   esac
 }
 
+# One bring-up at a time: rc.d/20-net.sh, rembley-autosetup, rembley-drivers and the GUI can all ask for it at boot; two wmt_launchers would fight.
+net_lock() {
+  L=/run/rembley/net.lock; mkdir -p /run/rembley; n=0
+  while ! mkdir $L 2>/dev/null; do
+    p=$(cat $L/pid 2>/dev/null)
+    if [ -n "$p" ] && ! kill -0 "$p" 2>/dev/null; then rm -rf $L; continue; fi          # owner died: take over
+    n=$((n + 1)); [ $n -gt 150 ] && { log "another network operation is still running after 150 s"; return 1; }
+    sleep 1
+  done
+  echo $$ > $L/pid; trap 'rm -rf /run/rembley/net.lock' EXIT INT TERM
+}
+case "$1" in auto|wifi-up|wifi-scan|wifi-connect|wifi-select|debug|heal) net_lock || exit 1 ;; esac
+
 case "$1" in
   auto)
     [ -x /system/bin/wmt_launcher ] || { log "no android blobs -> skipping Wi-Fi (docs/NETWORK.md)"; exit 0; }

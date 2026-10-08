@@ -430,10 +430,11 @@ class Launcher(Win):
 
 def power_dialog(parent):
     d = Gtk.Dialog(title='Выключение', transient_for=parent, modal=True); d.set_decorated(False); d.set_keep_above(True)
-    d.get_content_area().set_border_width(18)
-    d.get_content_area().pack_start(Gtk.Label(label='Что сделать с планшетом?'), False, False, 10)
-    for txt, rid in (('Выключить', 1), ('Перезагрузить', 2), ('Отмена', 0)):
-        b = d.add_button(txt, rid); b.set_size_request(260, 52)
+    d.set_position(Gtk.WindowPosition.CENTER_ALWAYS); ui.style_app(d)
+    box = d.get_content_area(); box.set_border_width(26); box.set_spacing(14)
+    t = Gtk.Label(label='Что сделать с планшетом?'); t.get_style_context().add_class('rcard-title'); box.pack_start(t, False, False, 6)
+    for txt, rid, cls in (('⏻  Выключить', 1, 'btn-danger'), ('↻  Перезагрузить', 2, 'btn-main'), ('Отмена', 0, 'btn-neutral')):
+        b = Gtk.Button(label=txt); b.get_style_context().add_class(cls); b.set_size_request(320, 60); b.connect('clicked', lambda _b, r=rid: d.response(r)); box.pack_start(b, False, False, 0)
     d.show_all(); r = d.run(); d.destroy()
     if r == 1: sh('sync; /bin/busybox poweroff -f')
     elif r == 2: sh('sync; /bin/busybox reboot -f')
@@ -478,7 +479,7 @@ class QuickPanel(Win):
                  ('SIM', ['network-cellular-signal-excellent', 'phone'], lambda: sh('rembley-netui modem')),
                  ('Клавиатура', ['input-keyboard'], lambda: sh('dbus-send --type=method_call --dest=org.onboard.Onboard /org/onboard/Onboard/Keyboard org.onboard.Onboard.Keyboard.ToggleVisible')),
                  ('Скриншот', ['applets-screenshooter', 'camera-photo', 'image-x-generic'], self.screenshot),
-                 ('Не беспокоить', ['notification-disabled', 'preferences-system-notifications'], lambda: (sh('dunstctl set-paused toggle'))),
+                 ('Не беспокоить', ['notification-disabled', 'preferences-system-notifications'], lambda: sh('rembley-dnd')),
                  ('Экономия', ['battery-good', 'battery'], lambda: sh('rembley-eco toggle')),
                  ('Поворот', ['object-rotate-right', 'view-refresh'], self.rotate),
                  ('Блокировка', ['system-lock-screen', 'lock'], lambda: (self.hide(), sh('rembley-lock'))),

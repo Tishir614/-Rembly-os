@@ -62,6 +62,8 @@ s_net() {
   else echo "wlan0 не появился: $(rembley-net preflight 2>/dev/null | grep MISSING | head -1 | sed 's/^ *//')"; ret 1; fi
 }
 s_selftest() {
+  # autosetup starts from rc.d, BEFORE the graphical session: give Xorg, the desktop daemons and the shell up to 2 minutes to come up, so the check judges the finished boot
+  for _ in $(seq 1 60); do pidof Xorg >/dev/null && pgrep -f '[r]embley-touchd' >/dev/null && pgrep -f '[r]embley-power' >/dev/null && break; sleep 2; done; sleep 5
   /usr/local/bin/rembley-selftest --json > $D/selftest-first.json 2>/dev/null
   f=$(grep -o '"status": *"fail"' $D/selftest-first.json 2>/dev/null | wc -l); w=$(grep -o '"status": *"warn"' $D/selftest-first.json 2>/dev/null | wc -l)
   if [ -s $D/selftest-first.json ] && [ "$f" = 0 ]; then echo "самопроверка: ошибок 0, предупреждений $w"; ret 0; else echo "самопроверка: ошибок $f (rembley-selftest)"; ret 1; fi

@@ -31,6 +31,7 @@ def checks():
     # --- touch
     r = run('rembley-touchprobe', 5).strip()
     add('Сенсорный экран', 'ok' if r else 'fail', r or 'не найден', '' if r else 'cat /proc/bus/input/devices ; rembley-touchtest')
+    tp = bool(r)
     if tp and run('pgrep -f "[r]embley-touchd"'): add('Жесты (rembley-touchd)', 'ok', 'работает')
     elif tp: add('Жесты (rembley-touchd)', 'warn', 'не запущен', 'cat /var/log/rembley-touchd.log')
     # --- keyboard

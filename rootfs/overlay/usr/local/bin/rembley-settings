@@ -47,7 +47,7 @@ def btn(text, fn, bg=True):
 
 
 def msg(parent, text):
-    d = Gtk.MessageDialog(transient_for=parent, modal=True, message_type=Gtk.MessageType.INFO, buttons=Gtk.ButtonsType.OK, text=text)
+    d = Gtk.MessageDialog(transient_for=parent, modal=True, message_type=Gtk.MessageType.INFO, buttons=Gtk.ButtonsType.OK, text=text); ui.style_app(d)
     d.run(); d.destroy()
 
 

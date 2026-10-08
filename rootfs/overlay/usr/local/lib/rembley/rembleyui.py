@@ -61,44 +61,48 @@ label { color: #ece6ff; }
 .lockhello { font-size: 20px; color: #efe8ff; text-shadow: 0 0 10px rgba(120,90,220,0.9); }
 .lockhint { font-size: 15px; color: #cfc6ee; }
 .lockbtn { background-image: linear-gradient(90deg, rgba(196,120,196,0.75), rgba(120,92,205,0.65)); border: none; border-radius: 30px; color: #fff; font-size: 20px; min-height: 60px; padding: 0 40px; box-shadow: 0 0 22px rgba(160,110,255,0.55); }
-window.rapp { background-image: linear-gradient(160deg, #181038, #2a1a5e 55%, #3c206f); color: #f1ecff; }
-window.rapp label { color: #f1ecff; }
-window.rapp label.small, window.rapp .dim { color: #bfb4e8; }
+.rapp { background-image: linear-gradient(160deg, #181038, #2a1a5e 55%, #3c206f); color: #f1ecff; }
+.rapp label { color: #f1ecff; }
+.rapp label.small, .rapp .dim { color: #bfb4e8; }
 .rcard { background-image: linear-gradient(160deg, rgba(255,255,255,0.12), rgba(255,255,255,0.05)); border: 1px solid rgba(200,180,255,0.28); border-radius: 20px; padding: 14px; }
 .rcard-title { font-size: 17px; font-weight: 600; color: #fff; }
 .rcard-big { font-size: 30px; font-weight: 300; color: #fff; text-shadow: 0 0 14px rgba(170,140,255,0.8); }
-window.rapp button { background-image: linear-gradient(90deg, rgba(160,105,235,0.80), rgba(105,90,225,0.72)); border: none; border-radius: 16px; color: #fff; min-height: 44px; text-shadow: none; box-shadow: 0 3px 12px rgba(0,0,0,0.30); padding: 0 18px; font-weight: 500; }
-window.rapp button:hover { background-image: linear-gradient(90deg, rgba(185,130,255,0.92), rgba(125,110,245,0.85)); }
-window.rapp button:active { background-image: linear-gradient(90deg, rgba(220,150,255,1), rgba(150,130,255,1)); }
-window.rapp button:disabled { opacity: 0.45; }
-window.rapp button.flat, window.rapp .titlebutton { background-image: none; box-shadow: none; }
-window.rapp progressbar trough { background-color: rgba(255,255,255,0.12); border: none; border-radius: 10px; min-height: 14px; }
-window.rapp progressbar progress { background-image: linear-gradient(90deg, #8d6bff, #ff7ac6); border: none; border-radius: 10px; min-height: 14px; }
-window.rapp progressbar text { color: #fff; font-size: 12px; }
-window.rapp treeview, window.rapp treeview.view { background-color: transparent; color: #f1ecff; }
-window.rapp treeview.view:selected { background-image: linear-gradient(90deg, rgba(196,120,196,0.60), rgba(120,92,205,0.55)); color: #fff; }
-window.rapp treeview header button { background-image: none; background-color: rgba(255,255,255,0.08); border-radius: 0; box-shadow: none; min-height: 38px; font-weight: 600; }
-window.rapp textview, window.rapp textview text { background-color: rgba(10,6,30,0.45); color: #eae4ff; border-radius: 14px; }
-window.rapp scrolledwindow { border-radius: 16px; }
-window.rapp entry { background-color: rgba(255,255,255,0.10); color: #fff; border: 1px solid rgba(190,170,255,0.35); border-radius: 14px; min-height: 40px; }
-window.rapp stacksidebar { background-color: rgba(10,6,30,0.35); }
-window.rapp stacksidebar row { min-height: 52px; padding: 0 14px; border-radius: 14px; margin: 2px 8px; }
-window.rapp stacksidebar row:selected { background-image: linear-gradient(90deg, rgba(196,120,196,0.65), rgba(120,92,205,0.50)); }
-window.rapp stack { background-color: transparent; }
-window.rapp scale trough { background-color: rgba(255,255,255,0.15); border-radius: 8px; min-height: 8px; }
-window.rapp scale highlight { background-image: linear-gradient(90deg, #8d6bff, #ff7ac6); border-radius: 8px; }
-window.rapp scale slider { background-color: #fff; border-radius: 12px; min-width: 24px; min-height: 24px; }
-window.rapp list, window.rapp listbox, window.rapp viewport, window.rapp .frame { background-color: rgba(10,6,30,0.30); border-radius: 16px; border-color: transparent; }
-window.rapp list row, window.rapp listbox row { border-radius: 12px; min-height: 48px; margin: 3px 6px; padding: 2px 10px; background-color: rgba(255,255,255,0.06); }
-window.rapp list row:selected, window.rapp listbox row:selected { background-image: linear-gradient(90deg, rgba(196,120,196,0.60), rgba(120,92,205,0.55)); }
-window.rapp notebook > header { background-color: rgba(10,6,30,0.35); border: none; }
-window.rapp notebook > header > tabs > tab { padding: 10px 22px; border-radius: 12px 12px 0 0; color: #cfc6ee; }
-window.rapp notebook > header > tabs > tab:checked { background-image: linear-gradient(180deg, rgba(160,105,235,0.0), rgba(160,105,235,0.45)); color: #fff; box-shadow: inset 0 -3px 0 #c08cff; }
-window.rapp switch { background-color: rgba(255,255,255,0.18); border-radius: 16px; border: none; }
-window.rapp switch:checked { background-image: linear-gradient(90deg, #8d6bff, #ff7ac6); }
-window.rapp switch slider { background-color: #fff; border-radius: 14px; border: none; }
-window.rapp combobox button, window.rapp spinbutton button { min-height: 38px; }
-window.rapp checkbutton label { padding-left: 4px; }
+.rapp button { background-image: linear-gradient(90deg, rgba(160,105,235,0.80), rgba(105,90,225,0.72)); border: none; border-radius: 16px; color: #fff; min-height: 44px; text-shadow: none; box-shadow: 0 3px 12px rgba(0,0,0,0.30); padding: 0 18px; font-weight: 500; }
+.rapp button:hover { background-image: linear-gradient(90deg, rgba(185,130,255,0.92), rgba(125,110,245,0.85)); }
+.rapp button:active { background-image: linear-gradient(90deg, rgba(220,150,255,1), rgba(150,130,255,1)); }
+.rapp button:disabled { opacity: 0.45; }
+.rapp button.btn-danger { background-image: linear-gradient(90deg, rgba(255,110,150,0.92), rgba(220,70,140,0.88)); font-size: 18px; }
+.rapp button.btn-neutral { background-image: none; background-color: rgba(255,255,255,0.12); box-shadow: none; }
+.rapp button.btn-main { font-size: 18px; }
+
+.rapp button.flat, .rapp .titlebutton { background-image: none; box-shadow: none; }
+.rapp progressbar trough { background-color: rgba(255,255,255,0.12); border: none; border-radius: 10px; min-height: 14px; }
+.rapp progressbar progress { background-image: linear-gradient(90deg, #8d6bff, #ff7ac6); border: none; border-radius: 10px; min-height: 14px; }
+.rapp progressbar text { color: #fff; font-size: 12px; }
+.rapp treeview, .rapp treeview.view { background-color: transparent; color: #f1ecff; }
+.rapp treeview.view:selected { background-image: linear-gradient(90deg, rgba(196,120,196,0.60), rgba(120,92,205,0.55)); color: #fff; }
+.rapp treeview header button { background-image: none; background-color: rgba(255,255,255,0.08); border-radius: 0; box-shadow: none; min-height: 38px; font-weight: 600; }
+.rapp textview, .rapp textview text { background-color: rgba(10,6,30,0.45); color: #eae4ff; border-radius: 14px; }
+.rapp scrolledwindow { border-radius: 16px; }
+.rapp entry { background-color: rgba(255,255,255,0.10); color: #fff; border: 1px solid rgba(190,170,255,0.35); border-radius: 14px; min-height: 40px; }
+.rapp stacksidebar { background-color: rgba(10,6,30,0.35); }
+.rapp stacksidebar row { min-height: 52px; padding: 0 14px; border-radius: 14px; margin: 2px 8px; }
+.rapp stacksidebar row:selected { background-image: linear-gradient(90deg, rgba(196,120,196,0.65), rgba(120,92,205,0.50)); }
+.rapp stack { background-color: transparent; }
+.rapp scale trough { background-color: rgba(255,255,255,0.15); border-radius: 8px; min-height: 8px; }
+.rapp scale highlight { background-image: linear-gradient(90deg, #8d6bff, #ff7ac6); border-radius: 8px; }
+.rapp scale slider { background-color: #fff; border-radius: 12px; min-width: 24px; min-height: 24px; }
+.rapp list, .rapp listbox, .rapp viewport, .rapp .frame { background-color: rgba(10,6,30,0.30); border-radius: 16px; border-color: transparent; }
+.rapp list row, .rapp listbox row { border-radius: 12px; min-height: 48px; margin: 3px 6px; padding: 2px 10px; background-color: rgba(255,255,255,0.06); }
+.rapp list row:selected, .rapp listbox row:selected { background-image: linear-gradient(90deg, rgba(196,120,196,0.60), rgba(120,92,205,0.55)); }
+.rapp notebook > header { background-color: rgba(10,6,30,0.35); border: none; }
+.rapp notebook > header > tabs > tab { padding: 10px 22px; border-radius: 12px 12px 0 0; color: #cfc6ee; }
+.rapp notebook > header > tabs > tab:checked { background-image: linear-gradient(180deg, rgba(160,105,235,0.0), rgba(160,105,235,0.45)); color: #fff; box-shadow: inset 0 -3px 0 #c08cff; }
+.rapp switch { background-color: rgba(255,255,255,0.18); border-radius: 16px; border: none; }
+.rapp switch:checked { background-image: linear-gradient(90deg, #8d6bff, #ff7ac6); }
+.rapp switch slider { background-color: #fff; border-radius: 14px; border: none; }
+.rapp combobox button, .rapp spinbutton button { min-height: 38px; }
+.rapp checkbutton label { padding-left: 4px; }
 entry.rl-search { background-color: rgba(255,255,255,0.12); color: #fff; border-radius: 14px; border: 1px solid rgba(190,170,255,0.3); min-height: 38px; }
 """
 
