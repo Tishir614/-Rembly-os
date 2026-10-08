@@ -26,6 +26,8 @@ s partnames 'for u in /sys/class/block/mmcblk0p*/uevent; do echo "$(basename $(d
 s audio 'aplay -l; amixer scontrols; cat /proc/asound/cards'
 s usb 'ls /sys/class/android_usb/android0; cat /sys/class/android_usb/android0/state 2>&1; cat /tmp/adbd.log 2>&1'
 s selftest 'rembley-selftest'
+s wifi-preflight 'rembley-net preflight'
+s touch-probe 'rembley-touchprobe; cat /proc/bus/input/devices'
 s drivers 'rembley-drivers status; ls /var/lib/rembley; cat /var/lib/rembley/drivers.json'
 s heal 'cat /var/log/rembley-heal.log /var/log/rembley-crash.log /var/log/rembley-drivers.log'
 s wmtstrace 'cat /var/log/wmt.strace /var/log/wmt.loader.strace | grep -c . ; cat /var/log/wmt.strace /var/log/wmt.loader.strace | grep ENOENT | sed -n "s/.*\"\\([^\"]*\\)\".*/\\1/p" | sort -u | head -60'

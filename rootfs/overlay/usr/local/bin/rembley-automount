@@ -10,6 +10,7 @@ if [ "$(basename "$0")" = rembley-eject ]; then
 fi
 case $act in
   add)
+    for _ in 1 2 3 4 5 6 7 8 9 10; do [ -b "$dev" ] && break; sleep 0.5; done      # udev may run before mdev created the node (no devtmpfs)
     [ -b "$dev" ] || exit 0
     fs=$(blkid -o value -s TYPE "$dev" 2>/dev/null); label=$(blkid -o value -s LABEL "$dev" 2>/dev/null)
     [ -n "$fs" ] || exit 0

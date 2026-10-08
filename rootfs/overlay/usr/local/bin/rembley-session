@@ -35,6 +35,8 @@ Section "ServerFlags"
     Option "OffTime" "0"
 EndSection
 C
+TP=$(rembley-touchprobe dev 2>/dev/null)          # touchscreen found by capabilities (any panel vendor), e.g. /dev/input/event2
+echo "touch: $(rembley-touchprobe 2>/dev/null || echo 'NOT FOUND')" >> /var/log/rembley-x.log
 if [ -e /run/rembley/static-input ]; then
   # fallback: no udev detection -> enumerate input devices ourselves (no hotplug)
   {
@@ -43,8 +45,9 @@ if [ -e /run/rembley/static-input ]; then
     for d in /sys/class/input/event*; do
       [ -e "$d/device/name" ] || continue
       name=$(cat "$d/device/name"); dev=/dev/input/$(basename "$d"); n=$((n+1)); extra=""
+      [ -n "$TP" ] && [ "$dev" = "$TP" ] && name="mtk-tpd"      # the capability probe decides, the name is only a hint
       case "$name" in
-        mtk-tpd|*[Tt]ouch*) extra="  Option \"TransformationMatrix\" \"$MATRIX\"" ;;
+        mtk-tpd|*[Tt]ouch*|*[Tt][Pp]*|*[Gg]oodix*|*[Ff][Tt]5*|*gsl*|*GSL*) extra="  Option \"TransformationMatrix\" \"$MATRIX\"" ;;
         *[Kk]eyboard*|*[Mm]ouse*|*HID*|*[Pp]ointer*) ;;
         *) continue ;;
       esac
@@ -60,6 +63,13 @@ else
 Section "InputClass"
     Identifier "rembley-touch"
     MatchProduct "mtk-tpd"
+    MatchDevicePath "/dev/input/event*"
+    Driver "libinput"
+    Option "TransformationMatrix" "$MATRIX"
+EndSection
+Section "InputClass"
+    Identifier "rembley-touch-any"
+    MatchIsTouchscreen "on"
     MatchDevicePath "/dev/input/event*"
     Driver "libinput"
     Option "TransformationMatrix" "$MATRIX"

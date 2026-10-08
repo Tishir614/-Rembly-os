@@ -29,8 +29,8 @@ def checks():
     x = run('pidof Xorg')
     add('Графический сервер Xorg', 'ok' if x else 'fail', 'PID %s' % x if x else 'не запущен', '' if x else 'cat /var/log/rembley-x.log')
     # --- touch
-    tp = [d for d in glob.glob('/sys/class/input/event*') if read(d + '/device/name') == 'mtk-tpd']
-    add('Сенсорный экран (mtk-tpd)', 'ok' if tp else 'fail', os.path.basename(tp[0]) if tp else 'не найден', '' if tp else 'cat /proc/bus/input/devices')
+    r = run('rembley-touchprobe', 5).strip()
+    add('Сенсорный экран', 'ok' if r else 'fail', r or 'не найден', '' if r else 'cat /proc/bus/input/devices ; rembley-touchtest')
     if tp and run('pgrep -f "[r]embley-touchd"'): add('Жесты (rembley-touchd)', 'ok', 'работает')
     elif tp: add('Жесты (rembley-touchd)', 'warn', 'не запущен', 'cat /var/log/rembley-touchd.log')
     # --- keyboard

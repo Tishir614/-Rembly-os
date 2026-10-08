@@ -10,7 +10,7 @@
 #        rembley-net wifi-select SSID   (saved network)
 #        rembley-net usb-ppp on|off     (IP over USB: CDC-ACM serial + PPP, because the kernel has no RNDIS/ECM)
 #        rembley-net bt-up              (explains why Bluetooth is unavailable with this kernel)
-#        rembley-net debug | heal | nvdata | firmware | diag | modem-probe | modem-up | modem-down | status
+#        rembley-net preflight | debug | heal | nvdata | firmware | diag | modem-probe | modem-up | modem-down | status
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 CONF=/etc/wpa_supplicant/rembley.conf; IF=${WIFI_IF:-wlan0}
 SYSFS=${SYSFS:-/sys}
@@ -97,8 +97,31 @@ wmt_start() {
   return 1
 }
 
+preflight() {   # prints one line per prerequisite; returns 2 when the KERNEL itself lacks the combo-chip driver (nothing we do in userland can fix that)
+  bad=0; fatal=0
+  chk() { if eval "$2"; then echo "  OK       $1"; else echo "  MISSING  $1  -> $3"; bad=$((bad + 1)); fi; }
+  mdev -s 2>/dev/null
+  have_kernel=0; for n in wmtdetect stpwmt wmtWifi; do [ -e /dev/$n ] || [ -e $SYSFS/class/misc/$n ] && have_kernel=$((have_kernel + 1)); done
+  grep -qE 'stpwmt|wmt' /proc/devices 2>/dev/null && have_kernel=$((have_kernel + 1))
+  if [ "$have_kernel" = 0 ]; then echo "  MISSING  kernel combo-chip driver (no /dev/wmt*, /dev/stpwmt, /sys/class/misc/wmt*)  -> the stock kernel did not register CONSYS; check: dmesg | grep -iE 'wmt|conn|consys'"; fatal=1; bad=$((bad + 1))
+  else echo "  OK       kernel combo-chip driver registered"; fi
+  chk "/system/bin/wmt_launcher" "[ -x /system/bin/wmt_launcher ]" "run: rembley-drivers install   (takes it from the tablet's Android partitions)"
+  chk "/system/bin/linker (Android loader)" "[ -e /system/bin/linker ]" "rembley-drivers install"
+  chk "wmt_loader" "[ -x /system/bin/wmt_loader ]" "rembley-drivers install"
+  chk "firmware WMT_SOC.cfg" "ls /vendor/firmware/WMT_SOC.cfg /system/etc/firmware/WMT_SOC.cfg /etc/firmware/WMT_SOC.cfg >/dev/null 2>&1" "rembley-drivers install; rembley-net firmware"
+  chk "wlan firmware / patch (ROMv*_patch*.bin)" "ls /vendor/firmware/*patch* /system/etc/firmware/*patch* /etc/firmware/*patch* >/dev/null 2>&1" "rembley-drivers install"
+  chk "stock NVDATA partition (calibration + MAC)" "[ -e /nvdata/APCFG/APRDEB/WIFI ] || grep -lx PARTNAME=nvdata $SYSFS/class/block/*/uevent >/dev/null 2>&1" "never erase nvdata; it is only read"
+  chk "wpa_supplicant" "command -v wpa_supplicant >/dev/null" "apt: rembley-pkg install wpasupplicant"
+  chk "no rfkill block" "! rfkill list 2>/dev/null | grep -q 'Hard blocked: yes'" "hardware switch / airplane mode"
+  [ "$fatal" = 1 ] && return 2
+  return 0
+}
+
 bringup_with_heal() {
   round=1; max=${HEAL_ROUNDS:-4}
+  mkdir -p /run/rembley; preflight > /run/rembley/preflight.txt 2>&1; pf=$?
+  log "preflight:"; tee -a /var/log/rembley-net.log < /run/rembley/preflight.txt
+  [ "$pf" = 2 ] && { log "the kernel has no Wi-Fi combo driver registered: repairs in userland cannot help (see docs/NETWORK.md)"; return 1; }
   while [ "$round" -le "$max" ]; do
     log "bring-up attempt $round of $max"
     TRACE=""; [ "$round" -ge 2 ] && TRACE=1
@@ -217,6 +240,7 @@ C
     sleep 15; ip -4 addr show ppp0 | grep inet || { log "ppp0 not up, see /var/log/ppp.log"; exit 1; } ;;
   modem-down) pkill pppd ;;
   status) "$0" wifi-status; wifi_mac_report; ip -4 addr show ppp0 2>/dev/null | grep inet ;;
+  preflight) preflight; exit $? ;;
   heal) python3 /usr/local/lib/rembley/rembley_heal.py ;;
   debug)   # one-stop Wi-Fi diagnosis: runs the bring-up (with self-repair) and prints every piece of evidence in one place
     echo "=== bring-up"; HEAL_ROUNDS=${HEAL_ROUNDS:-4} wifi_up; echo "exit=$?"

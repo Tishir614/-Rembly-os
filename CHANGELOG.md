@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.12
+- rembley_touch: поиск тача по свойствам и реальному диапазону; rembley-net preflight; ожидание узла в automount
+
 ## 0.11
 - tools/verify-images.sh + автозапуск в flash-rembley.sh; автомонтирование USB (rembley-automount/eject); rembley-taskman; ntfs-3g/exfat
 

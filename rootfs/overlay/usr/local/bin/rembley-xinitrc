@@ -10,7 +10,8 @@ setxkbmap -layout ${LAYOUTS:-us,ru} -option grp:alt_shift_toggle,grp:win_space_t
 xset r rate 300 35 2>/dev/null
 # udev-mode sanity check: if the touchscreen was not picked up, restart X in static-input mode once
 ( sleep 6
-  if ! xinput list --name-only 2>/dev/null | grep -q 'mtk-tpd'; then
+  TPN=$(rembley-touchprobe name 2>/dev/null); [ -n "$TPN" ] || TPN=mtk-tpd
+  if ! xinput list --name-only 2>/dev/null | grep -qF "$TPN"; then
     if [ ! -e /run/rembley/static-input ]; then touch /run/rembley/static-input; pkill -x Xorg; fi
   fi ) &
 exec dbus-launch --exit-with-session /usr/local/bin/rembley-desktop

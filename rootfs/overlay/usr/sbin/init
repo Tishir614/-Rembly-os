@@ -31,7 +31,7 @@ for t in /etc/rembley/rc.d/*.sh; do [ -x "$t" ] && "$t" 2>&1 | while read l; do 
 mkdir -p /var/lib/dbus; dbus-uuidgen --ensure 2>/dev/null
 dbus-daemon --system --fork 2>/dev/null
 
-say "Rembley OS up. Starting graphical session (touch: $(grep -l mtk-tpd /sys/class/input/event*/device/name 2>/dev/null | head -1))"
+say "Rembley OS up. Starting graphical session (touch: $(rembley-touchprobe 2>/dev/null || echo not found))"
 # Supervisor: respawn the session; if X dies repeatedly fall back to a console shell.
 fails=0
 while true; do

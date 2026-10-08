@@ -47,6 +47,17 @@ def to_screen(nx, ny, rot):
 
 
 def find_device():
+    sys.path[:0] = ['/usr/local/lib/rembley', os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'lib', 'rembley')]
+    try:
+        import rembley_touch
+        r = rembley_touch.find()
+        if r:
+            global RAW_W, RAW_H
+            rg = rembley_touch.ranges(r[0])
+            if rg: RAW_W, RAW_H = rg                      # the panel's real coordinate range, not a guess
+            return r[0]
+    except Exception:
+        pass
     for d in sorted(glob.glob('/sys/class/input/event*')):
         try:
             if open(d + '/device/name').read().strip() == 'mtk-tpd': return '/dev/input/' + os.path.basename(d)
