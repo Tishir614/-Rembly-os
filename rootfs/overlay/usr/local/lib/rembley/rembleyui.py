@@ -252,7 +252,7 @@ def launch_gapp(app):
     try:
         cmd = re.sub(r'%[a-zA-Z%]', '', app.get_commandline() or '').strip()
         if cmd and not app.get_boolean('Terminal'):
-            sh(cmd); return
+            sh('rembley-guard ' + cmd); return
     except Exception:
         pass
     app.launch([], None)

@@ -3,6 +3,7 @@
 
   rembley-doctor            check once, fix what it knows, print the result
   rembley-doctor --dry-run  only say what it would do
+  rembley-doctor history    last 60 lines of what the doctor did
   rembley-doctor watch      background mode (started by the desktop): looks every 60 s, at low priority
   rembley-doctor --ai       for errors it does not know, ask the optional AI helper (see rembley-ai)
 
@@ -105,7 +106,7 @@ def fix_oom(m):
 
 
 def fix_shell(m):
-    if subprocess.run('pgrep -f rembley-shell', shell=True, capture_output=True).returncode == 0: return True, 'оболочка жива'
+    if subprocess.run('pgrep -f "[r]embley-shell"', shell=True, capture_output=True).returncode == 0: return True, 'оболочка жива'
     sh('rembley-restart-shell'); return True, 'оболочка перезапущена'
 
 
@@ -119,6 +120,43 @@ def fix_appimage(m):
 
 def fix_wifi(m):
     rc, out = sh('rembley-net heal', 600); return rc == 0, 'самолечение Wi-Fi: ' + (out.strip().splitlines() or [''])[-1]
+
+def fix_ro(m):
+    rc, out = sh('mount -o remount,rw / 2>&1')
+    return rc == 0, 'корневая ФС снова доступна для записи' if rc == 0 else 'не удалось remount rw (возможна ошибка ФС: проверьте eMMC/питание)'
+
+
+def fix_apt_lists(m):
+    if not online(): return False, 'нужна сеть для apt update'
+    sh('rm -rf /var/lib/apt/lists/*'); rc, _ = sh('rembley-pkg update'); return rc == 0, 'списки пакетов обновлены'
+
+
+def fix_sound(m):
+    sh('alsactl init >/dev/null 2>&1; /etc/rembley/rc.d/15-audio.sh >/dev/null 2>&1'); return True, 'звук переинициализирован'
+
+
+def fix_wlan(m):
+    rc, out = sh('rembley-net auto', 600); return rc == 0, 'повторный подъём сети'
+
+
+def fix_display(m):
+    if os.environ.get('DISPLAY'): return False, 'DISPLAY уже задан'
+    return False, 'X-сервер не запущен: перезапуск сессии (rembley-restart-shell) после выхода из программы'
+
+
+def fix_inode(m):
+    rc, _ = sh('rembley-clean'); return rc == 0, 'inode освобождены'
+
+
+def fix_perm(m):
+    p = m.group(1)
+    if not p.startswith(('/root/', '/tmp/', '/run/rembley/', '/var/log/')) or '..' in p: return False, 'путь %s вне безопасных каталогов' % p
+    sh('chmod u+rwX %s' % p); return True, 'права на %s исправлены' % p
+
+
+def fix_gtkcache(m):
+    sh('gtk-update-icon-cache -f -t /usr/share/icons/Papirus-Dark >/dev/null 2>&1; glib-compile-schemas /usr/share/glib-2.0/schemas; update-desktop-database >/dev/null 2>&1')
+    return True, 'кэши иконок/схем/приложений пересобраны'
 
 
 RULES = [  # (name, regex, fix)
@@ -135,6 +173,14 @@ RULES = [  # (name, regex, fix)
     ('оболочка', re.compile(r'rembley-shell.*(?:Traceback|crashed|segfault)', re.S), fix_shell),
     ('X-сервер', re.compile(r'Server is already active for display|Cannot establish any listening sockets'), fix_x),
     ('AppImage/FUSE', re.compile(r'fusermount|FUSE|dlopen\(\): error loading libfuse|Cannot mount AppImage'), fix_appimage),
+    ('ФС только для чтения', re.compile(r'Read-only file system|Remounting filesystem read-only'), fix_ro),
+    ('списки apt', re.compile(r'Hash Sum mismatch|Unable to locate package|Release file for .* has no|Some index files failed to download|File has unexpected size'), fix_apt_lists),
+    ('звук', re.compile(r'no soundcards found|ALSA lib .* (?:cannot find card|No such device)|Cannot open audio device'), fix_sound),
+    ('нет wlan0', re.compile(r'Cannot find device "wlan0"|wlan0: No such device|nl80211.*not found'), fix_wlan),
+    ('нет дисплея', re.compile(r'cannot open display|Can\'t open display|Unable to init server'), fix_display),
+    ('inode', re.compile(r'No inodes left|inodes? exhausted'), fix_inode),
+    ('права', re.compile(r"PermissionError: \[Errno 13\][^\n]*'(/[^']+)'"), fix_perm),
+    ('кэш GTK/иконок', re.compile(r'Failed to load (?:icon|theme)|GLib-GIO-ERROR: Settings schema|No such schema|icon-theme\.cache'), fix_gtkcache),
     ('Wi-Fi прошивка', re.compile(r'Direct firmware load for \S+ failed|wmt_launcher.*(?:fail|not found)', re.I), fix_wifi),
 ]
 
@@ -182,18 +228,47 @@ def health_text():
 
 def run_once(use_ai=False):
     txt = new_text() + health_text()
+    crash_loop()
     done, unknown = [], []
     for name, rx, fix in RULES:
-        m = rx.search(txt)
-        if not m: continue
-        ok, what = fix(m)
-        log('%s %s: %s' % ('ИСПРАВЛЕНО' if ok else 'НЕ УДАЛОСЬ', name, what)); done.append((name, ok))
+        seen = set()
+        for m in list(rx.finditer(txt))[:5]:                 # several different paths/modules of one kind, at most 5 per run
+            key = m.group(1) if m.groups() else ''
+            if key in seen: continue
+            seen.add(key)
+            ok, what = fix(m)
+            log('%s %s: %s' % ('ИСПРАВЛЕНО' if ok else 'НЕ УДАЛОСЬ', name, what)); done.append((name, ok))
     if not done and re.search(r'Traceback \(most recent call last\)|\bsegfault\b|Segmentation fault', txt):
         unknown.append(txt[-3000:])
         log('Неизвестная ошибка (в таблице правил её нет).')
         if use_ai:
             rc = subprocess.run(['rembley-ai', 'explain', '--stdin'], input=unknown[-1], text=True).returncode
     return done, unknown
+
+
+def crash_loop():
+    """The shell / any rembley program crashing 3+ times within 5 minutes -> SAFE MODE: no animations, battery saver, so the UI can stay up."""
+    try: t = open(os.environ.get('REMBLEY_CRASH_LOG', '/var/log/rembley-crash.log'), errors='replace').read()[-60000:]
+    except OSError: return False
+    now, n = time.time(), 0
+    for m in re.finditer(r'==== (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) rembley-(?:shell|desktop|settings|store|netui)', t):
+        try:
+            if now - time.mktime(time.strptime(m.group(1), '%Y-%m-%d %H:%M:%S')) < 300: n += 1
+        except ValueError: pass
+    flag = '/run/rembley/safemode'
+    if n >= 3 and not os.path.exists(flag):
+        if not DRY:
+            os.makedirs('/run/rembley', exist_ok=True); open(flag, 'w').close()
+            cfg = os.path.expanduser('~/.config/rembley'); os.makedirs(cfg, exist_ok=True); open(cfg + '/motion', 'w').write('off')
+            sh('rembley-eco on')
+        log('БЕЗОПАСНЫЙ РЕЖИМ: %d сбоев интерфейса за 5 минут -> анимации выключены, включена экономия. Вернуть: Настройки -> Экран -> Анимации.' % n)
+        return True
+    return False
+
+
+def history():
+    try: print(''.join(open(HIST, errors='replace').readlines()[-60:]) or 'Журнал пуст.')
+    except OSError: print('Журнал пуст.')
 
 
 def notify(done):
@@ -203,6 +278,7 @@ def notify(done):
 
 
 def main():
+    if 'history' in sys.argv: return history() or 0
     if 'watch' in sys.argv:
         os.nice(15)
         while True:
