@@ -281,7 +281,12 @@ def main():
     if 'history' in sys.argv: return history() or 0
     if 'watch' in sys.argv:
         os.nice(15)
+        tick = 0
         while True:
+            tick += 1
+            if tick % 1440 == 30 and online():                  # about once a day, 30 min after start: only LOOK for a new version, never install by itself
+                rc, out = sh('rembley-update --check', 120)
+                if 'Update available' in out: subprocess.Popen(['notify-send', 'Доступно обновление Rembley', 'Настройки -> Обновить, или команда: rembley-update'], stderr=subprocess.DEVNULL)
             try: notify(run_once()[0])
             except Exception as e: log('doctor: %s' % e)
             time.sleep(60)

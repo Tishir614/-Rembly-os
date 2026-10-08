@@ -1,13 +1,79 @@
-#!/bin/sh
-# Update Rembley scripts/themes on the device without rebuilding the image.
-# usage: rembley-update [DIR_WITH_REPO | GIT_URL]     (default: $REMBLEY_REPO or /var/cache/rembley-src)
-# Keeps your settings (display/power/kbd config, user dotfiles, hostname).
-SRC=${1:-${REMBLEY_REPO:-}}
-if [ -d "$SRC/rootfs/overlay" ]; then DIR=$SRC
-elif [ -n "$SRC" ]; then
-  DIR=/var/cache/rembley-src; rm -rf $DIR; git clone --depth 1 "$SRC" $DIR || exit 1
-elif [ -d /var/cache/rembley-src/.git ]; then DIR=/var/cache/rembley-src; git -C $DIR pull --ff-only || exit 1
-else echo "usage: rembley-update DIR|GIT_URL  (e.g. a USB stick copy of the repo, or the GitHub URL)"; exit 1; fi
-rsync -a --exclude='/etc/hostname' --exclude='/etc/rembley/*.conf' --exclude='/etc/rembley/pin' --exclude='/root/.config/' \
-      --exclude='/etc/rembley/timezone' "$DIR/rootfs/overlay/" / && chmod +x /usr/local/bin/rembley-* /sbin/init /etc/rembley/rc.d/*.sh 2>/dev/null
-echo "Updated from $DIR. Restart the desktop: rembley-restart-shell (or reboot for init/rc.d changes)."
+#!/bin/bash
+# rembley-update - update Rembley OS with ONE command.
+#   rembley-update               check -> download -> test the new files -> back up the old ones -> install -> restart the shell
+#   rembley-update --check       only say whether a newer version exists
+#   rembley-update --system      additionally run apt upgrade (Ubuntu packages; needs ~free space, see rembley-pkg)
+#   rembley-update --rollback    put back the files from the last backup
+#   rembley-update DIR|GIT_URL   use another source (e.g. a USB copy of the repo)
+# Your settings are never overwritten: /etc/rembley/*.conf, ai.conf, pin, hostname, timezone, ~/.config.
+# Source and branch: /etc/rembley/update.conf. Security: the download is protected by HTTPS to the repo owner, nothing more -
+# new files are syntax-checked before install and the previous ones are backed up, but they are NOT signed.
+set -u
+R=${REMBLEY_ROOT:-}   # test hook: install into another root folder instead of /
+CONF=$R/etc/rembley/update.conf; BK=$R/var/backups/rembley; VER=$R/etc/rembley/version; WORK=$R/var/cache/rembley-src
+REPO=; BRANCH=; [ -r $CONF ] && . $CONF
+CHECK=0; SYS=0; ROLL=0; SRC=
+for a in "$@"; do case $a in --check) CHECK=1;; --system) SYS=1;; --rollback) ROLL=1;; -h|--help) sed -n '2,10p' "$0"; exit 0;; *) SRC=$a;; esac; done
+say() { echo "== $*"; }
+KEEP=(--exclude=/etc/hostname --exclude='/etc/rembley/*.conf' --exclude=/etc/rembley/pin --exclude=/etc/rembley/timezone --exclude=/etc/rembley/ai.conf --exclude=/etc/rembley/version --exclude=/root/.config/)
+
+if [ $ROLL = 1 ]; then
+  last=$(ls -1t $BK/*.tar.gz 2>/dev/null | head -1); [ -n "$last" ] || { echo "no backup in $BK"; exit 1; }
+  tar -C "${R:-/}" -xzf "$last" && say "restored $last" && { command -v rembley-restart-shell >/dev/null && rembley-restart-shell; }; exit 0
+fi
+
+# ---- get the source ----
+if [ -n "$SRC" ] && [ -d "$SRC/rootfs/overlay" ]; then DIR=$SRC; NEW=$(git -C "$SRC" rev-parse --short HEAD 2>/dev/null || echo local)
+else
+  URL=${SRC:-${REMBLEY_REPO:-$REPO}}; [ -n "$URL" ] || { echo "no source: set REPO= in $CONF or pass a git URL / folder"; exit 1; }
+  [ -n "$R" ] || ip route 2>/dev/null | grep -q default || { echo "no network. Connect Wi-Fi first (Settings -> Network)."; exit 1; }
+  mkdir -p $WORK
+  if [ ! -d $WORK/.git ] || [ "$(git -C $WORK remote get-url origin 2>/dev/null)" != "$URL" ]; then rm -rf $WORK; git init -q $WORK && git -C $WORK remote add origin "$URL"; fi
+  say "checking $URL ${BRANCH:+($BRANCH)}"
+  git -C $WORK fetch -q --depth 1 origin ${BRANCH:-HEAD} || { echo "download failed"; exit 1; }
+  NEW=$(git -C $WORK rev-parse --short FETCH_HEAD); DIR=$WORK
+fi
+OLD=$(cat $VER 2>/dev/null || echo none)
+echo "installed: $OLD   available: $NEW"
+if [ "$OLD" = "$NEW" ] && [ $SYS = 0 ]; then echo "Already up to date."; exit 0; fi
+[ $CHECK = 1 ] && { [ "$OLD" != "$NEW" ] && echo "Update available."; exit 0; }
+
+if [ "$DIR" = $WORK ]; then git -C $WORK checkout -q -f FETCH_HEAD || exit 1; fi
+if [ "$OLD" != "$NEW" ]; then
+  # ---- test the new files BEFORE touching the system ----
+  say "testing new files"
+  bad=0
+  while IFS= read -r f; do
+    case "$(head -c 40 "$f" 2>/dev/null | head -1)" in
+      '#!/bin/sh'*|'#!/bin/bash'*) bash -n "$f" 2>/dev/null || { echo "  syntax error: $f"; bad=1; } ;;
+      '#!/usr/bin/env python3'*) python3 -c "import ast,sys;ast.parse(open(sys.argv[1]).read())" "$f" 2>/dev/null || { echo "  syntax error: $f"; bad=1; } ;;
+    esac
+  done < <(find "$DIR/rootfs/overlay/usr/local/bin" "$DIR/rootfs/overlay/etc/rembley/rc.d" -type f 2>/dev/null)
+  for f in "$DIR"/rootfs/overlay/usr/local/lib/rembley/*.py; do [ -f "$f" ] || continue; python3 -c "import ast,sys;ast.parse(open(sys.argv[1]).read())" "$f" 2>/dev/null || { echo "  syntax error: $f"; bad=1; }; done
+  [ $bad = 0 ] || { echo "The new version failed the checks - NOTHING was changed."; exit 1; }
+  # ---- space + backup of exactly the files that will change ----
+  mkdir -p $BK; free=$(df -m --output=avail "${R:-/}" | tail -1 | tr -d ' ')
+  [ "$free" -gt 150 ] || { echo "only ${free} MB free: run rembley-clean first"; exit 1; }
+  say "backing up files that will change"
+  list=$(rsync -ain "${KEEP[@]}" "$DIR/rootfs/overlay/" "$R/" 2>/dev/null | awk '/^[<>c.][fL]/ {sub(/^[^ ]+ /,""); print}')
+  ts=$(date +%Y%m%d-%H%M%S)
+  ( cd "${R:-/}" && printf '%s\n' $list | while read -r p; do [ -e "$p" ] && echo "$p"; done | tar -czf $BK/$ts.tar.gz -T - 2>/dev/null )
+  ls -1t $BK/*.tar.gz 2>/dev/null | tail -n +6 | xargs -r rm -f          # keep the last 5
+  say "installing"
+  rsync -a "${KEEP[@]}" "$DIR/rootfs/overlay/" "$R/" || { echo "install failed - run: rembley-update --rollback"; exit 1; }
+  [ -n "$R" ] || {
+  chmod +x /usr/local/bin/rembley-* /usr/sbin/init /etc/rembley/rc.d/*.sh 2>/dev/null
+  find /usr/local/lib/rembley -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null
+  python3 -m compileall -q /usr/local/lib/rembley >/dev/null 2>&1
+  glib-compile-schemas /usr/share/glib-2.0/schemas 2>/dev/null; }
+  echo "$NEW" > $VER
+  # does anything need a reboot? (init / rc.d / sysctl) otherwise just restart the shell
+  NEEDBOOT=0; echo "$list" | grep -qE 'sbin/init|rc\.d/' && NEEDBOOT=1
+fi
+if [ $SYS = 1 ]; then
+  say "Ubuntu packages (apt upgrade)"
+  rembley-pkg update && DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold upgrade
+fi
+say "done: $OLD -> $NEW   (undo: rembley-update --rollback)"
+if [ "${NEEDBOOT:-0}" = 1 ]; then echo "init/rc.d changed: reboot to apply everything."; else [ -z "$R" ] && command -v rembley-restart-shell >/dev/null && rembley-restart-shell >/dev/null 2>&1; fi
+exit 0
