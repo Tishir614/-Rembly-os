@@ -1,0 +1,20 @@
+#!/bin/bash
+# rembley-autosetup - runs by itself on the first boot (from rc.d/08-autosetup.sh) and sets everything up. Each step is idempotent and
+# remembered, so an interrupted run continues at the next boot. Progress: /run/rembley/autosetup.status, log: /var/log/rembley-autosetup.log
+D=/var/lib/rembley; S=/run/rembley/autosetup.status; mkdir -p $D /run/rembley
+step() { name=$1; shift; [ -e $D/auto-$name ] && return 0; echo "$name" > $S; echo "== $name $(date +%T)"; "$@" && touch $D/auto-$name || echo "   (step $name failed, will retry next boot)"; }
+
+s_dirs()   { mkdir -p /root/{Documents,Downloads,Pictures,Music,Videos,Projects,.config/rembley}; return 0; }
+s_locale() { locale -a 2>/dev/null | grep -qi 'ru_RU.utf8' || locale-gen en_US.UTF-8 ru_RU.UTF-8 >/dev/null 2>&1; update-locale LANG=ru_RU.UTF-8 LC_MESSAGES=en_US.UTF-8 2>/dev/null; [ -s /etc/rembley/kbd.conf ] || echo LAYOUTS=us,ru > /etc/rembley/kbd.conf; return 0; }
+s_hostname(){ [ "$(cat /etc/hostname 2>/dev/null)" = rembley ] && { id=$(cat /sys/class/net/*/address 2>/dev/null | head -1 | tr -d ':' | tail -c 5); [ -n "$id" ] && echo "rembley-$id" > /etc/hostname && hostname "rembley-$id"; }; return 0; }
+s_caches() { /usr/local/bin/rembley-optimize --quiet; return 0; }
+s_drivers(){ [ -x /system/bin/wmt_launcher ] && return 0; /usr/local/bin/rembley-drivers install --auto >/var/log/rembley-drivers.log 2>&1; return 0; }
+s_net()    { /usr/local/bin/rembley-net auto >/var/log/rembley-net.log 2>&1; return 0; }
+s_update() { ip route 2>/dev/null | grep -q default || return 1; /usr/local/bin/rembley-update >/var/log/rembley-update.log 2>&1; return 0; }
+s_selftest(){ /usr/local/bin/rembley-selftest --json > $D/selftest-first.json 2>/dev/null; return 0; }
+
+step dirs s_dirs; step locale s_locale; step hostname s_hostname; step caches s_caches; step drivers s_drivers; step net s_net
+step selftest s_selftest
+step update s_update          # needs network: if there is none it is retried on the next boot
+if [ -e $D/auto-update ]; then echo done > $S; notify-send "Rembley настроен" "Первичная настройка завершена" 2>/dev/null; fi
+exit 0

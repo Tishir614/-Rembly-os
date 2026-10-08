@@ -43,7 +43,7 @@ PKGS_MIN="git python3 python3-pip python3-venv build-essential cmake make gdb no
  openssh-client neofetch bluez usbutils net-tools wpasupplicant iw rfkill ppp wireless-tools earlyoom \
  tzdata locales ncdu mc alsa-utils strace"
 # Light desktop: Xorg + xfwm4 (no compositor) + our own GTK shell instead of full XFCE session/panel/xfdesktop.
-PKGS_DESK="xserver-xorg-core xserver-xorg-video-fbdev xserver-xorg-input-libinput xinit x11-xserver-utils x11-utils xinput unclutter \
+PKGS_DESK="xserver-xorg-core xdotool xserver-xorg-video-fbdev xserver-xorg-input-libinput xinit x11-xserver-utils x11-utils xinput unclutter \
  xfwm4 xfce4-settings xfce4-terminal xfce4-taskmanager xfce4-appfinder thunar mousepad dbus-x11 \
  python3-gi python3-gi-cairo gir1.2-gtk-3.0 python3-pil wmctrl playerctl onboard \
  fonts-noto-core fonts-dejavu-core papirus-icon-theme adwaita-icon-theme gtk2-engines-pixbuf \

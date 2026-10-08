@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+"""rembley-updater - touch UI for updates: one button checks the repository, a second one downloads and installs what is new."""
+import os, re, subprocess, sys, threading
+sys.path[:0] = ['/usr/local/lib/rembley', os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'lib', 'rembley')]
+import rembleyui as ui
+from rembleyui import *
+ui.install_crash_handler()
+
+
+class Updater(Gtk.Window):
+    def __init__(self):
+        super().__init__(title='Обновление Rembley'); self.set_default_size(760, 560); self.set_position(Gtk.WindowPosition.CENTER)
+        ui.init_theme()
+        v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10); v.set_border_width(18); self.add(v)
+        t = Gtk.Label(label='Обновление системы', xalign=0); t.get_style_context().add_class('rl-title'); v.pack_start(t, False, False, 0)
+        self.state = Gtk.Label(label='Нажмите «Проверить»: планшет подключится к репозиторию и посмотрит, есть ли новая версия.', xalign=0)
+        self.state.set_line_wrap(True); v.pack_start(self.state, False, False, 0)
+        self.bar = Gtk.ProgressBar(); v.pack_start(self.bar, False, False, 0)
+        row = Gtk.Box(spacing=10); v.pack_start(row, False, False, 0)
+        self.b_check = self.mk('Проверить', self.check); self.b_inst = self.mk('Скачать и установить', self.install); self.b_inst.set_sensitive(False)
+        self.b_roll = self.mk('Откатить', self.rollback)
+        for b in (self.b_check, self.b_inst, self.b_roll): row.pack_start(b, True, True, 0)
+        self.sys = Gtk.CheckButton(label='Заодно обновить пакеты Ubuntu (дольше, нужно место)'); v.pack_start(self.sys, False, False, 0)
+        sc = Gtk.ScrolledWindow(); sc.set_vexpand(True); v.pack_start(sc, True, True, 0)
+        self.tv = Gtk.TextView(editable=False, monospace=True, wrap_mode=Gtk.WrapMode.WORD_CHAR); sc.add(self.tv); self.buf = self.tv.get_buffer()
+        self.pulse_id = None; self.show_all(); self.connect('destroy', Gtk.main_quit)
+        GLib.idle_add(self.check)
+
+    def mk(self, text, fn):
+        b = Gtk.Button(label=text); b.set_size_request(-1, 56); b.connect('clicked', lambda _b: fn()); return b
+
+    def log(self, text, clear=False):
+        if clear: self.buf.set_text('')
+        self.buf.insert(self.buf.get_end_iter(), text); self.tv.scroll_to_iter(self.buf.get_end_iter(), 0, False, 0, 0)
+
+    def busy(self, on, text=''):
+        for b in (self.b_check, self.b_inst, self.b_roll): b.set_sensitive(not on)
+        if on:
+            self.state.set_text(text); self.pulse_id = GLib.timeout_add(120, lambda: (self.bar.pulse(), True)[1])
+        elif self.pulse_id:
+            GLib.source_remove(self.pulse_id); self.pulse_id = None; self.bar.set_fraction(0)
+
+    def run(self, args, text, done):
+        self.busy(True, text); self.log('', True)
+        def work():
+            p = subprocess.Popen(['rembley-update'] + args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            out = ''
+            for line in p.stdout:
+                out += line; GLib.idle_add(self.log, line)
+            p.wait(); GLib.idle_add(self.finish, done, out, p.returncode)
+        threading.Thread(target=work, daemon=True).start()
+
+    def finish(self, done, out, rc):
+        self.busy(False); done(out, rc)
+
+    def check(self):
+        def done(out, rc):
+            m = re.search(r'installed: (\S+)\s+available: (\S+)', out)
+            if rc != 0: self.state.set_text('Не удалось проверить. Нет сети или репозиторий недоступен (см. ниже).')
+            elif 'Update available' in out:
+                self.state.set_text('Доступна новая версия %s (у вас %s). Нажмите «Скачать и установить».' % (m.group(2), m.group(1)) if m else 'Доступно обновление.')
+                self.b_inst.set_sensitive(True)
+            else: self.state.set_text('У вас последняя версия.')
+        self.run(['--check'], 'Подключаюсь к репозиторию…', done)
+
+    def install(self):
+        def done(out, rc):
+            self.state.set_text('Готово. Откат: кнопка «Откатить».' if rc == 0 and 'done:' in out else 'Установка не выполнена (см. ниже). Система не изменена или её можно откатить.')
+            if 'reboot' in out: self.state.set_text(self.state.get_text() + ' Нужна перезагрузка.')
+        self.run((['--system'] if self.sys.get_active() else []), 'Скачиваю и устанавливаю…', done)
+
+    def rollback(self):
+        self.run(['--rollback'], 'Возвращаю прошлую версию…', lambda out, rc: self.state.set_text('Откат выполнен.' if rc == 0 else 'Откат не удался.'))
+
+
+if __name__ == '__main__':
+    Updater(); Gtk.main()

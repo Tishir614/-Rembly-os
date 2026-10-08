@@ -460,7 +460,7 @@ class QuickPanel(Win):
         cls.inst.refresh(); cls.inst.show_all(); cls.inst.present()
 
     def __init__(self, sw, sh_, wall, blur):
-        w, h = 372, 520
+        w, h = 372, 610
         super().__init__(wall, blur, (sw - w - 16, sh_ - BAR - h - 8), type=Gtk.WindowType.TOPLEVEL)
         self.set_decorated(False); self.set_default_size(w, h); self.move(sw - w - 16, sh_ - BAR - h - 8)
         self.set_type_hint(Gdk.WindowTypeHint.DIALOG); self.set_skip_taskbar_hint(True); self.set_keep_above(True)
@@ -483,6 +483,9 @@ class QuickPanel(Win):
                  ('Поворот', ['object-rotate-right', 'view-refresh'], self.rotate),
                  ('Блокировка', ['system-lock-screen', 'lock'], lambda: (self.hide(), sh('rembley-lock'))),
                  ('Настройки', ['preferences-system'], lambda: (self.hide(), sh('rembley-settings'))),
+                 ('Обновление', ['system-software-update', 'software-update-available', 'view-refresh'], lambda: (self.hide(), sh('rembley-updater'))),
+                 ('Оптимизация', ['utilities-system-monitor', 'preferences-system-performance'], lambda: (self.hide(), sh('xfce4-terminal --hold --title=Оптимизация -e "rembley-optimize"'))),
+                 ('Язык EN/RU', ['preferences-desktop-locale', 'input-keyboard'], lambda: sh('xdotool key ISO_Next_Group')),
                  ('Отчёт', ['dialog-information', 'help-about'], lambda: (self.hide(), sh('xfce4-terminal -e "rembley-report"'))),
                  ('Выключение', ['system-shutdown'], lambda: (self.hide(), power_dialog(None)))]
         for i, (name, ic, fn) in enumerate(items):
@@ -590,7 +593,7 @@ class Bar(Win):
                  ('music', ['audacious', 'multimedia-audio-player'], 'audacious'), ('photo', ['gpicview', 'image-viewer'], 'gpicview'),
                  ('set', ['preferences-system', 'xfce4-settings-manager'], 'rembley-settings')]
         w = 12 + 10 * 56 + 8
-        p = self.pill((self.sw - w) // 2, w)
+        p = self.pill((self.sw - w) // 2 - 44, w)
         ha = Gtk.Button(); ha.set_relief(Gtk.ReliefStyle.NONE); ha.get_style_context().add_class('dockbtn'); ha.add(Avatar(38))
         ha.connect('clicked', lambda _b: sh('wmctrl -k on')); p.pack_start(ha, False, False, 0)
         for _, ic, cmd in items:
@@ -614,17 +617,31 @@ class Bar(Win):
         step(0)
 
     def build_tray(self):
-        w = 312; p = self.pill(self.sw - w - 16, w); p.set_spacing(6)
+        w = 366; p = self.pill(self.sw - w - 16, w); p.set_spacing(6)
         self.wifi = Gtk.Button(); self.bt = Gtk.Button(); self.sim = Gtk.Button()
         for b, cmd in ((self.wifi, 'rembley-netui'), (self.bt, 'rembley-netui bt'), (self.sim, 'rembley-netui modem')):
             b.set_relief(Gtk.ReliefStyle.NONE); b.get_style_context().add_class('dockbtn'); b.connect('clicked', lambda _b, c=cmd: sh(c))
             p.pack_start(b, False, False, 0)
+        self.lang = Gtk.Button(label='EN'); self.lang.set_relief(Gtk.ReliefStyle.NONE); self.lang.get_style_context().add_class('dockbtn')
+        self.lang.get_style_context().add_class('tray'); self.lang.connect('clicked', lambda _b: self.switch_lang())
+        p.pack_start(self.lang, False, False, 0); GLib.timeout_add(700, self.lang_tick)
         self.bat = Gtk.Label(); self.bat.get_style_context().add_class('tray')
         self.tc = Gtk.Label(); self.tc.get_style_context().add_class('tray')
         qb = Gtk.Button(); qb.set_relief(Gtk.ReliefStyle.NONE); qb.get_style_context().add_class('dockbtn')
         row = Gtk.Box(spacing=10); row.pack_start(self.bat, False, False, 0); row.pack_start(self.tc, False, False, 0); qb.add(row)
         qb.connect('clicked', lambda _b: QuickPanel.toggle(self.sw, self.sh, self.wall, self.blur))
         p.pack_end(qb, False, False, 0)
+
+    def lang_tick(self):
+        x = xconn(); g = x.kbd_group() if x else None
+        if g is not None: self.lang.set_label(('EN', 'RU', 'L3', 'L4')[min(g, 3)])
+        return True
+
+    def switch_lang(self):
+        """One tap: next keyboard layout (English <-> Russian); the on-screen keyboard follows the system layout."""
+        x = xconn(); g = x.kbd_group() if x else None
+        if g is not None and x.kbd_lock(1 - g if g < 2 else 0): self.lang_tick()
+        else: sh('xdotool key ISO_Next_Group')
 
     def status(self):
         def work():

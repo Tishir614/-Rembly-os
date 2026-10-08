@@ -287,6 +287,11 @@ def main():
             if tick % 1440 == 30 and online():                  # about once a day, 30 min after start: only LOOK for a new version, never install by itself
                 rc, out = sh('rembley-update --check', 120)
                 if 'Update available' in out: subprocess.Popen(['notify-send', 'Доступно обновление Rembley', 'Настройки -> Обновить, или команда: rembley-update'], stderr=subprocess.DEVNULL)
+            if tick % 10 == 5 and online() and not os.path.exists('/var/lib/rembley/auto-update') and os.path.exists('/var/lib/rembley/auto-dirs') \
+               and subprocess.run('pgrep -f "[r]embley-autosetup"', shell=True, capture_output=True).returncode != 0:
+                subprocess.Popen(['rembley-autosetup'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)     # first-boot setup waited for the network
+            if tick % 10080 == 60 and open('/proc/loadavg').read().split()[0] < '0.5':                          # about weekly, only when the tablet is idle
+                sh('rembley-optimize --quiet')
             try: notify(run_once()[0])
             except Exception as e: log('doctor: %s' % e)
             time.sleep(60)

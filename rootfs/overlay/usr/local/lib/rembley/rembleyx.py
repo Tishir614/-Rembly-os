@@ -13,6 +13,10 @@ _x11.XGetWindowProperty.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ul
                                     ctypes.POINTER(ctypes.c_ulong), ctypes.POINTER(ctypes.c_void_p)]
 _x11.XGetWindowProperty.restype = ctypes.c_int
 _x11.XFlush.argtypes = [ctypes.c_void_p]
+try:
+    _x11.XkbGetState.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_char_p]; _x11.XkbLockGroup.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_uint]
+except AttributeError:
+    pass
 
 try:
     _xtst = ctypes.CDLL(ctypes.util.find_library('Xtst') or 'libXtst.so.6')
@@ -67,6 +71,20 @@ class XConn:
         names = {self.atom(n): n for n in ('_NET_WM_WINDOW_TYPE_NORMAL', '_NET_WM_WINDOW_TYPE_DIALOG', '_NET_WM_WINDOW_TYPE_DOCK',
                                            '_NET_WM_WINDOW_TYPE_DESKTOP', '_NET_WM_WINDOW_TYPE_UTILITY', '_NET_WM_WINDOW_TYPE_SPLASH')}
         return [names.get(a, str(a)) for a in self.prop('_NET_WM_WINDOW_TYPE', wid)]
+
+    def kbd_group(self):
+        """Current XKB layout group (0 = first layout, e.g. us; 1 = second, e.g. ru). None if unavailable."""
+        try:
+            buf = ctypes.create_string_buffer(32)                       # XkbStateRec; its first byte is the effective group
+            return buf.raw[0] if _x11.XkbGetState(self.d, 0x100, buf) == 0 else None
+        except Exception:
+            return None
+
+    def kbd_lock(self, group):
+        try:
+            _x11.XkbLockGroup(self.d, 0x100, int(group)); _x11.XFlush(self.d); return True
+        except Exception:
+            return False
 
     def idle_ms(self):
         if not self._ss: return None
