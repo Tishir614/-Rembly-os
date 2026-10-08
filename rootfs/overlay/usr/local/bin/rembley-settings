@@ -115,10 +115,17 @@ class Settings(Gtk.Window):
         v.pack_start(btn('Проверка сенсора (4 мишени)', lambda: ui.sh('rembley-touchtest'), False), False, False, 4)
         v.pack_start(btn('Применить ориентацию', lambda: ui.sh('rembley-rotate ' + self.rot.get_active_id().lower()), False), False, False, 4)
         self.dpi = Gtk.ComboBoxText()
-        for k, t in (('110', 'Мелко (110)'), ('140', 'Обычно (140)'), ('170', 'Крупно (170)'), ('200', 'Очень крупно (200)')): self.dpi.append(k, t)
-        self.dpi.set_active_id(kv_get(RE + '/display.conf', 'DPI', '140') if kv_get(RE + '/display.conf', 'DPI', '140') in ('110', '140', '170', '200') else '140')
-        v.pack_start(row('Размер интерфейса', self.dpi, 'Применится после перезапуска экрана.'), False, False, 0)
-        v.pack_start(btn('Применить размер', lambda: (kv_set(RE + '/display.conf', 'DPI', self.dpi.get_active_id()), ui.sh('pkill -x Xorg')), False), False, False, 4)
+        for k, t in (('auto', 'Авто: по размеру и разрешению вашей панели'), ('110', 'Мелко (110)'), ('140', 'Обычно (140)'), ('170', 'Крупно (170)'), ('200', 'Очень крупно (200)')): self.dpi.append(k, t)
+        self.dpi.set_active_id('auto' if kv_get(RE + '/display.conf', 'DPI_USER', '') != '1' else (kv_get(RE + '/display.conf', 'DPI', '140') if kv_get(RE + '/display.conf', 'DPI', '140') in ('110', '140', '170', '200') else '140'))
+        v.pack_start(row('Размер интерфейса', self.dpi, 'Авто — значение рассчитано по измерениям вашего планшета (rembley-hwprobe). Применится после перезапуска экрана.'), False, False, 0)
+        def apply_dpi():
+            k = self.dpi.get_active_id(); f = RE + '/display.conf'
+            if k == 'auto':
+                kv_set(f, 'DPI_USER', '0'); subprocess.run(['rembley-hwprobe', '--apply', '--quiet'])
+            else:
+                kv_set(f, 'DPI', k); kv_set(f, 'DPI_USER', '1')
+            ui.sh('pkill -x Xorg')
+        v.pack_start(btn('Применить размер', apply_dpi, False), False, False, 4)
         self.icons = Gtk.ComboBoxText(); self.icons.append('tiles', 'Современные плитки'); self.icons.append('flat', 'Плоские значки')
         self.icons.set_active_id('flat' if read(CFG + '/icons') == 'flat' else 'tiles')
         v.pack_start(row('Стиль иконок', self.icons, 'Цветные стеклянные плитки или обычные значки. Применится после перезапуска рабочего стола.'), False, False, 0)
@@ -320,6 +327,7 @@ class Settings(Gtk.Window):
 
     def p_about(self):
         v = page('О планшете')
+        v.pack_start(btn('Автонастройка: что проверено на моём планшете', lambda: ui.sh('xfce4-terminal --hold --title=Автонастройка -e "sh -c \'rembley-autosetup status; echo; rembley-hwprobe\'"'), False), False, False, 4)
         try: v.pack_start(Gtk.Image.new_from_pixbuf(GdkPixbuf.Pixbuf.new_from_file_at_size(os.path.join(SHARE, 'logo-small.png'), 260, 260)), False, False, 4)
         except Exception: pass
         mi = {l.split(':')[0]: int(l.split()[1]) for l in open('/proc/meminfo') if ':' in l}
