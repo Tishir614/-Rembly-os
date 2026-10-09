@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+"""rembly-bootfail "REASON"  -  draws a diagnostic screen straight into the framebuffer (works when X is dead): the reason, the tail of the boot,
+X and kernel logs, and what to do. Called by init when the desktop does not come up. Needs only python3 + PIL, never X."""
+import glob, os, subprocess, sys
+
+W, H = 800, 1280
+reason = sys.argv[1] if len(sys.argv) > 1 else 'Рабочий стол не запустился'
+try:
+    os.makedirs('/run/rembly', exist_ok=True); open('/run/rembly/boot-done', 'w').close()       # stops the boot animation loop (it would paint over this screen)
+except OSError: pass
+subprocess.run('pkill -f rembly-bootanim', shell=True, stderr=subprocess.DEVNULL)
+
+
+def rd(p, n=14):
+    try: return [l.rstrip('\n') for l in open(p, errors='replace').read().splitlines() if l.strip()][-n:]
+    except OSError: return ['(нет файла %s)' % p]
+
+
+def sh(cmd):
+    try: return subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=5).stdout.splitlines()
+    except Exception: return []
+
+
+try:
+    bpp = int(open('/sys/class/graphics/fb0/bits_per_pixel').read()); stride = int(open('/sys/class/graphics/fb0/stride').read())
+except OSError: sys.exit('no framebuffer')
+if stride != W * bpp // 8 or bpp not in (16, 32): sys.exit('unexpected framebuffer format %s/%s' % (bpp, stride))
+from PIL import Image, ImageDraw, ImageFont
+
+
+def font(sz, bold=False, mono=False):
+    for pat in (('DejaVuSansMono%s.ttf' % ('-Bold' if bold else '')) if mono else ('DejaVuSans%s.ttf' % ('-Bold' if bold else '')),):
+        for p in glob.glob('/usr/share/fonts/**/' + pat, recursive=True): return ImageFont.truetype(p, sz)
+    return ImageFont.load_default()
+
+
+img = Image.new('RGB', (W, H), (0, 0, 0)); d = ImageDraw.Draw(img)
+try:
+    mk = Image.open('/usr/share/rembly/logo-mark-small.png'); mk = mk.resize((110, int(mk.height * 110 / mk.width)))
+    img.paste(Image.new('RGB', mk.size, (255, 255, 255)), (40, 36), mk.getchannel('A'))
+except Exception: pass
+d.text((180, 44), 'Rembly OS', font=font(40, True), fill=(255, 255, 255)); d.text((180, 96), 'запуск не удался', font=font(26), fill=(190, 190, 190))
+y = 190; d.rectangle([40, y, W - 40, y + 2], fill=(235, 235, 235)); y += 22
+import textwrap
+for line in textwrap.wrap(reason, 52): d.text((40, y), line, font=font(26, True), fill=(255, 255, 255)); y += 36
+y += 14
+mf = font(14, mono=True)
+
+
+def block(title, lines, n):
+    global y
+    d.text((40, y), title, font=font(18, True), fill=(255, 255, 255)); y += 28
+    for l in lines[-n:]:
+        for w in textwrap.wrap(l, 86) or ['']:
+            d.text((40, y), w, font=mf, fill=(205, 205, 205)); y += 17
+            if y > H - 330: return
+    y += 10
+
+
+block('boot.log', rd('/var/log/boot.log', 10), 10)
+block('Xorg (rembly-x.log)', rd('/var/log/rembly-x.log', 12), 12)
+block('ядро (dmesg)', sh('dmesg | tail -n 12'), 12)
+y = max(y, H - 320); d.rectangle([40, y, W - 40, y + 2], fill=(120, 120, 120)); y += 18
+for t, f in (('Что сделать', font(24, True)), ('1. Подождите: часть шагов (рост файловой системы) идёт долго.', font(20)),
+             ('2. USB к ПК, затем:  adb shell', font(20)), ('3. Там:  rembly-report --usb   (отчёт на флешку)', font(20)),
+             ('   или:  cat /var/log/boot.log /var/log/rembly-x.log', font(20)), ('4. Перезагрузка:  adb reboot', font(20))):
+    d.text((40, y), t, font=f, fill=(235, 235, 235)); y += 34 if f.size > 20 else 30
+from PIL import ImageChops
+if bpp == 32: out = img.convert('RGBA').tobytes('raw', 'BGRA')
+else:                                                  # RGB565 little endian with PIL channel arithmetic only (no per-pixel Python loop: this runs on a slow CPU)
+    r, g, b = img.split()
+    lo = ImageChops.add(g.point([((v >> 2) & 7) << 5 for v in range(256)]), b.point([v >> 3 for v in range(256)]))
+    hi = ImageChops.add(r.point([(v >> 3) << 3 for v in range(256)]), g.point([v >> 5 for v in range(256)]))
+    out = Image.merge('LA', (lo, hi)).tobytes()
+with open(os.environ.get('REMBLY_FB', '/dev/fb0'), 'wb') as fb: fb.write(out)

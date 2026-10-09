@@ -85,15 +85,27 @@ else
   log "no android_usb gadget in sysfs (see /tmp/hwreport.txt)"
 fi
 
-# --- find rootfs: partition labelled REMBLY, or rembly-rootfs.img on any fs ---
-# ext4 volume label lives at superblock offset 1024+120 (no blkid applet in this busybox)
-label_of() { dd if="$1" bs=1 skip=1144 count=16 2>/dev/null | tr -d '\000'; }
+# --- find rootfs: ANY block device whose ext4 label is REMBLY (flashed userdata, recovery slot, SD card, USB stick), or rembly-rootfs.img on external media ---
+# ext4 volume label lives at superblock offset 1024+120 = 1144 (no blkid applet in this busybox); dd bs=8 skip=143 count=2 reads exactly those 16 bytes
+label_of() { dd if="$1" bs=8 skip=143 count=2 2>/dev/null | tr -d '\000'; }
+scan_candidates() {                              # every real block device the kernel knows (partitions included); eMMC boot areas and virtual disks are skipped
+  for u in /sys/class/block/*; do
+    n=${u##*/}
+    case $n in loop*|ram*|zram*|dm-*|mtdblock*|*boot[0-9]*) continue;; esac
+    [ -b "/dev/$n" ] && echo "/dev/$n"
+  done
+}
+userdata_dev() {                                 # the partition named userdata (PARTNAME in sysfs), wherever it is
+  for u in /sys/class/block/*/uevent; do
+    grep -qx 'PARTNAME=userdata' "$u" 2>/dev/null && { d=${u%/uevent}; echo "/dev/${d##*/}"; return; }
+  done
+}
 try_mount_root() {
   dev=$1
   mount -o ro "$dev" /mnt 2>/dev/null || return 1
-  if [ "$(label_of "$dev")" = REMBLY ] && [ -x /mnt/sbin/init ]; then
-    mount -o remount,rw /mnt; mount --move /mnt /newroot; return 0
-  fi
+  case "$(label_of "$dev")" in REMBLY|REMBLEY)                       # REMBLEY = label of images built before the rename
+    if [ -x /mnt/sbin/init ]; then mount -o remount,rw /mnt; mount --move /mnt /newroot; return 0; fi;;
+  esac
   if [ -f /mnt/rembly-rootfs.img ]; then
     mount -o remount,rw /mnt 2>/dev/null
     if mount -o loop /mnt/rembly-rootfs.img /newroot 2>/dev/null && [ -x /newroot/sbin/init ]; then
@@ -104,14 +116,23 @@ try_mount_root() {
   umount /mnt 2>/dev/null; return 1
 }
 find_root() {
-  # external media first; internal userdata last
-  for dev in /dev/sd[a-z][0-9] /dev/sd[a-z] /dev/mmcblk1p[0-9] /dev/mmcblk1 /dev/mmcblk0p26; do
-    [ -b "$dev" ] && try_mount_root "$dev" && { log "rootfs on $dev"; return 0; }
+  # 1. by label, on every device (cheap: 16 bytes read per partition, nothing is mounted unless the label matches)
+  for dev in $(scan_candidates); do
+    case "$(label_of "$dev")" in REMBLY|REMBLEY) try_mount_root "$dev" && { log "rootfs (label) on $dev"; return 0; };; esac
+  done
+  # 2. an image file on external media, then on userdata
+  for dev in /dev/sd[a-z][0-9] /dev/sd[a-z] /dev/mmcblk1p[0-9] /dev/mmcblk1 $(userdata_dev); do
+    [ -b "$dev" ] && try_mount_root "$dev" && { log "rootfs (image file) on $dev"; return 0; }
   done
   return 1
 }
+rootscan_report() {                              # what the scan sees: for the screen's instructions (adb shell: cat /tmp/rootscan.txt)
+  { echo "block devices and their ext4 labels (REMBLY is what is looked for):"
+    for dev in $(scan_candidates); do echo "  $dev  label='$(label_of "$dev")'  size_kb=$(cat /sys/class/block/${dev##*/}/size 2>/dev/null | awk '{print int($1/2)}')"; done
+    echo "userdata partition by name: $(userdata_dev)"; } >/tmp/rootscan.txt 2>&1
+}
 n=0
-while [ $n -lt 15 ]; do
+while [ $n -lt 25 ]; do
   mdev -s
   find_root && {
     mount --move /proc /newroot/proc 2>/dev/null; mount --move /sys /newroot/sys 2>/dev/null
@@ -120,7 +141,11 @@ while [ $n -lt 15 ]; do
   }
   n=$((n+1)); sleep 1
 done
-log "no rootfs found -> emergency shell. Helpers: touchtest, hw (report)"
+rootscan_report
+log "no rootfs found -> emergency shell. Helpers: touchtest, hw (report), cat /tmp/rootscan.txt"
+if [ -n "$bpp" ] && [ -f /noroot.$bpp.gz ] && [ "$stride" = "$((800 * bpp / 8))" ]; then   # tell the user ON THE SCREEN instead of freezing on the logo
+  pkill -f rembly-bootanim 2>/dev/null; gunzip -c /noroot.$bpp.gz > /dev/fb0 2>/dev/null
+fi
 cat >/bin/touchtest <<'T'
 #!/bin/sh
 for e in /dev/input/event*; do echo "$e: $(cat /sys/class/input/$(basename $e)/device/name)"; done
@@ -128,7 +153,7 @@ echo "touch the screen; Ctrl-C to stop"; hexdump -C /dev/input/${1:-event2}
 T
 cat >/bin/hw <<'T'
 #!/bin/sh
-cat /tmp/hwreport.txt
+cat /tmp/hwreport.txt /tmp/rootscan.txt
 T
 chmod +x /bin/touchtest /bin/hw
 while true; do setsid sh -c 'exec sh </dev/console >/dev/console 2>&1' ; done

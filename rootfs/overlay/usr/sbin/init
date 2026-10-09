@@ -2,11 +2,12 @@
 # Rembly OS stage-2 init (PID 1). No systemd: kernel 3.18 has no devtmpfs/cgroups/namespaces.
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 BB=/bin/busybox
-say() { echo "[rembly] $*" >/dev/console 2>/dev/null; echo "[rembly] $*"; }
+say() { echo "[rembly] $*" >/dev/console 2>/dev/null; echo "[rembly] $*"; echo "$(date +%T) $*" >>/var/log/boot.log 2>/dev/null; }
 
 grep -q ' /proc ' /proc/mounts 2>/dev/null || mount -t proc proc /proc
 grep -q ' /sys '  /proc/mounts || mount -t sysfs sysfs /sys
 mount -o remount,rw / 2>/dev/null
+mkdir -p /var/log; : > /var/log/boot.log 2>/dev/null
 mount -t tmpfs -o mode=1777 tmpfs /tmp
 mount -t tmpfs -o mode=0755 tmpfs /run
 mkdir -p /dev/pts /dev/shm /run/dbus /run/sshd /tmp/.X11-unix
@@ -32,10 +33,16 @@ bootbar() {   # bootbar N  (0..8)
 }
 bootbar 1
 [ -x /usr/sbin/rembly-bootanim ] && { rm -f /run/rembly/boot-done; setsid nice -n 10 /usr/sbin/rembly-bootanim /usr/share/rembly/boot/loop loop >/dev/null 2>&1 </dev/null & }   # atmosphere while the system starts
+( sleep 150; pidof Xorg >/dev/null 2>&1 || { say 'watchdog: no Xorg after 150 s'; /usr/sbin/rembly-bootfail 'Рабочий стол не запустился за 150 секунд (какой-то шаг запуска завис)'; } ) >/dev/null 2>&1 </dev/null &
 hostname "$(cat /etc/hostname 2>/dev/null || echo rembly)"
 ip link set lo up 2>/dev/null
 for t in /etc/rembly/rc.d/*.sh; do
-  [ -x "$t" ] && "$t" 2>&1 | while read l; do say "$l"; done
+  if [ -x "$t" ]; then
+    say "rc: $(basename "$t")"
+    if command -v timeout >/dev/null 2>&1; then timeout -k 5 90 "$t" </dev/null >/run/rc.out 2>&1; rc=$?; else "$t" </dev/null >/run/rc.out 2>&1; rc=$?; fi
+    [ "$rc" = 124 ] || [ "$rc" = 137 ] && say "rc: $(basename "$t") was stopped after 90 s (it hung)"
+    while read l; do say "$l"; done </run/rc.out
+  fi
   BAR=$((BAR + 1)); [ $BAR -gt 6 ] && BAR=6; bootbar $((BAR + 1))
 done
 
@@ -50,9 +57,10 @@ fails=0
 while true; do
   /usr/local/bin/rembly-session; rc=$?
   fails=$((fails+1)); say "session exited ($rc), failure $fails"
-  if [ $fails -ge 3 ]; then
+  [ $fails -eq 2 ] && /usr/sbin/rembly-bootfail "Графическая сессия завершилась ($rc) уже $fails раза: Xorg не стартует. Попытки продолжаются." >/dev/null 2>&1
+  if [ $fails -ge 4 ]; then
     say "falling back to console shell (see /var/log/rembly-x.log)"
     setsid sh -c 'exec sh </dev/console >/dev/console 2>&1'; fails=0
   fi
-  sleep 2
+  sleep 4
 done
