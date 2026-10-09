@@ -31,6 +31,7 @@ bootbar() {   # bootbar N  (0..8)
   $BB gunzip -c /usr/share/rembly/boot/bar-$1.$BPP.gz | $BB dd of=/dev/fb0 bs="$STRIDE" seek="$BROW" conv=notrunc 2>/dev/null
 }
 bootbar 1
+[ -x /usr/sbin/rembly-bootanim ] && { rm -f /run/rembly/boot-done; setsid nice -n 10 /usr/sbin/rembly-bootanim /usr/share/rembly/boot/loop loop >/dev/null 2>&1 </dev/null & }   # atmosphere while the system starts
 hostname "$(cat /etc/hostname 2>/dev/null || echo rembly)"
 ip link set lo up 2>/dev/null
 for t in /etc/rembly/rc.d/*.sh; do

@@ -21,6 +21,9 @@ if [ ! -f "$BOOT" ]; then bad "missing"; else
       b=$(dd if="$STOCK" bs=2048 skip=1 count=$(((ks+2047)/2048)) 2>/dev/null | head -c "$ks" | sha256sum | cut -d' ' -f1)
       [ "$(le32 "$STOCK" 8)" = "$ks" ] && [ "$a" = "$b" ] && ok "kernel + DTB are byte-identical to your stock boot.bin" || bad "kernel differs from stock boot.bin"
     else bad "stock boot $STOCK not found"; fi; }
+  if [ -f "$DIR/initramfs-files.txt" ]; then
+    for f in bin/rembly-bootanim anim/32/09.gz anim/16/09.gz splash.32.gz; do grep -q " $f\$" "$DIR/initramfs-files.txt" && ok "initramfs contains $f" || bad "initramfs lacks $f (boot animation)"; done
+  fi
   [ -f "$BOOT.sha256" ] && { (cd "$DIR" && sha256sum -c "$(basename "$BOOT").sha256" >/dev/null 2>&1) && ok "sha256 matches" || bad "sha256 mismatch"; }
 fi
 

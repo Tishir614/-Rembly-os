@@ -1,0 +1,16 @@
+#!/bin/sh
+# rembly-bootanim DIR [loop]  -  Rembly OS boot animation. DIR contains 32/ and 16/ with NN.gz frames (the 800x800 logo area, rows 150.. of the
+# 800x1280 framebuffer, full width): the player is only `gunzip | dd`. Stage 1 plays the intro once, stage 2 loops until the desktop starts.
+# Anything unexpected (other framebuffer format, missing frames) -> it simply does nothing; boot never depends on it.
+D=$1; LOOP=$2; ROW=150; FB=/dev/fb0
+BPP=$(cat /sys/class/graphics/fb0/bits_per_pixel 2>/dev/null); STRIDE=$(cat /sys/class/graphics/fb0/stride 2>/dev/null)
+[ -n "$BPP" ] && [ "$STRIDE" = "$((800 * BPP / 8))" ] && [ -d "$D/$BPP" ] && [ -w "$FB" ] || exit 0
+while :; do
+  for f in "$D/$BPP"/*.gz; do
+    [ -e "$f" ] || exit 0
+    [ -e /run/rembly/boot-done ] && exit 0
+    gunzip -c "$f" 2>/dev/null | dd of="$FB" bs="$STRIDE" seek="$ROW" conv=notrunc 2>/dev/null
+    sleep 0.12
+  done
+  [ -n "$LOOP" ] || exit 0
+done

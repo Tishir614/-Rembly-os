@@ -18,7 +18,7 @@ img = Image.new('RGB', (W, H), bg)
 side = 800
 lg = logo.resize((side, side), Image.LANCZOS)
 mask = Image.new('L', (side, side), 255)
-img.paste(lg, ((W - side) // 2, 150), mask)
+# the logo itself is drawn by the boot animation (tools/gen_bootanim.py); this base picture only carries the caption and the progress track
 dr = ImageDraw.Draw(img)
 def centered(text, yy, f, fill):
     w = dr.textlength(text, font=f); dr.text(((W - w) / 2, yy), text, font=f, fill=fill)

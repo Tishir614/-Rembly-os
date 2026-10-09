@@ -50,7 +50,14 @@ def main():
              ('etc/mdev.conf', F | 0o644, open(os.path.join(HERE, 'initramfs/etc/mdev.conf'), 'rb').read()),
              ('splash.32.gz', F | 0o644, open(os.path.join(HERE, 'initramfs/splash.32.gz'), 'rb').read()),
              ('splash.16.gz', F | 0o644, open(os.path.join(HERE, 'initramfs/splash.16.gz'), 'rb').read()),
-             ('bin/sh', L, b'busybox'), ('system/bin/sh', L, b'../../bin/busybox')]
+             ('bin/sh', L, b'busybox'), ('system/bin/sh', L, b'../../bin/busybox'),
+             ('bin/rembly-bootanim', F | 0o755, open(os.path.join(HERE, 'initramfs/rembly-bootanim'), 'rb').read())]
+    for bpp in ('32', '16'):                                   # intro frames of the boot animation (tools/gen_bootanim.py)
+        ad = os.path.join(HERE, 'initramfs', 'anim', bpp)
+        if os.path.isdir(ad):
+            ents += [('anim', D, b''), ('anim/' + bpp, D, b'')] if bpp == '32' else [('anim/' + bpp, D, b'')]
+            for fn in sorted(os.listdir(ad)):
+                if fn.endswith('.gz'): ents.append(('anim/%s/%s' % (bpp, fn), F | 0o644, open(os.path.join(ad, fn), 'rb').read()))
     cpio = T.cpio_write(ents)
     rd = gzip.compress(cpio, 9, mtime=0)
     open(os.path.join(OUT, 'rembly-initramfs.cpio.gz'), 'wb').write(rd)

@@ -76,5 +76,6 @@ Section "InputClass"
 EndSection
 C
 fi
+touch /run/rembly/boot-done; pkill -f rembly-bootanim 2>/dev/null     # the boot animation ends here; X takes over the screen
 exec xinit /usr/local/bin/rembly-xinitrc -- /usr/bin/Xorg :0 \
      -nolisten tcp -noreset -novtswitch -sharevts -keeptty -dpi $DPI -logfile $LOG

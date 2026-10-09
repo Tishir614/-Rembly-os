@@ -51,6 +51,7 @@ if [ -e /dev/fb0 ]; then
   bpp=$(cat /sys/class/graphics/fb0/bits_per_pixel 2>/dev/null); stride=$(cat /sys/class/graphics/fb0/stride 2>/dev/null)
   if [ -f /splash.$bpp.gz ] && [ -n "$bpp" ] && [ "$stride" = "$((800 * bpp / 8))" ]; then
     gunzip -c /splash.$bpp.gz > /dev/fb0 2>/dev/null && log "splash drawn (bpp=$bpp)"
+    [ -x /bin/rembly-bootanim ] && { /bin/rembly-bootanim /anim >/dev/null 2>&1 & }      # intro: ring, fox, eyes, letters (plays once, ~1.5 s)
   else
     dd if=/dev/urandom of=/dev/fb0 bs=65536 count=64 2>/dev/null
     log "splash skipped (bpp=$bpp stride=$stride): wrote noise to fb0"
