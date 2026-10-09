@@ -34,6 +34,9 @@ def checks():
     tp = bool(r)
     if tp and run('pgrep -f "[r]embley-touchd"'): add('Жесты (rembley-touchd)', 'ok', 'работает')
     elif tp: add('Жесты (rembley-touchd)', 'warn', 'не запущен', 'cat /var/log/rembley-touchd.log')
+    # --- completeness of the install (see rembley-repair)
+    rr = run('rembley-repair check', 120); mf = [l for l in rr.splitlines() if l.startswith('Не хватает файлов Rembley')]
+    add('Целостность файлов Rembley', 'ok' if 'Итог: всё на месте' in rr else 'warn', (mf[0] if mf else rr.splitlines()[-1] if rr else 'нет ответа'), '' if 'Итог: всё на месте' in rr else 'rembley-repair fix')
     # --- RAM: measured, not claimed
     try:
         import json as _j2

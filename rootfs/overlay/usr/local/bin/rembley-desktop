@@ -9,6 +9,7 @@ rembley-touchd >/var/log/rembley-touchd.log 2>&1 &            # long-press = rig
 rembley-power >/var/log/rembley-power.log 2>&1 &       # screen dim/off, power key, low battery, clock stamp
 rembley-thermal >/dev/null 2>&1 &                            # overheating guard (eco mode at 80 C)
 rembley-profile apply >/dev/null 2>&1                       # restore the saved power profile
+rembley-repair auto >/dev/null 2>&1 &                         # login check: missing files/packages/drivers are fetched (waits for Wi-Fi if needed)
 rembley-doctor watch >/dev/null 2>&1 &                    # offline auto-repair of known errors
 sleep 1
 # UI first: Xorg, window manager, keyboard and shell outrank applications (apps are started at nice +10 / low IO priority)

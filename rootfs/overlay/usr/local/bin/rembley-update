@@ -5,6 +5,7 @@
 #   rembley-update --system      additionally run apt upgrade (Ubuntu packages; needs ~free space, see rembley-pkg)
 #   rembley-update --rollback    put back the files from the last backup
 #   rembley-update DIR|GIT_URL   use another source (e.g. a USB copy of the repo)
+#   rembley-update --repair LIST restore only the files listed in LIST (one path per line, relative to /): used by rembley-repair
 # Your settings are never overwritten: /etc/rembley/*.conf, ai.conf, pin, hostname, timezone, ~/.config.
 # Source and branch: /etc/rembley/update.conf. Security: the download is protected by HTTPS to the repo owner, nothing more -
 # new files are syntax-checked before install and the previous ones are backed up, but they are NOT signed.
@@ -13,6 +14,7 @@ R=${REMBLEY_ROOT:-}   # test hook: install into another root folder instead of /
 CONF=$R/etc/rembley/update.conf; BK=$R/var/backups/rembley; VER=$R/etc/rembley/version; WORK=$R/var/cache/rembley-src
 REPO=; BRANCH=; TOKEN=; [ -r $CONF ] && . $CONF
 GIT=(git); [ -n "$TOKEN" ] && GIT=(git -c "http.extraHeader=Authorization: Basic $(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)")   # private repo
+REPAIR=""; if [ "${1:-}" = --repair ]; then REPAIR=${2:?usage: rembley-update --repair LISTFILE}; shift 2; fi    # used by rembley-repair: restore ONLY the listed files
 CHECK=0; SYS=0; ROLL=0; SRC=
 for a in "$@"; do case $a in --check) CHECK=1;; --system) SYS=1;; --rollback) ROLL=1;; -h|--help) sed -n '2,10p' "$0"; exit 0;; *) SRC=$a;; esac; done
 say() { echo "== $*"; }
@@ -24,6 +26,7 @@ if [ $ROLL = 1 ]; then
 fi
 
 # ---- get the source ----
+[ -z "$SRC" ] && [ -d "${REMBLEY_REPO:-}/rootfs/overlay" ] && SRC=$REMBLEY_REPO      # a folder (USB copy of the repo) works offline too
 if [ -n "$SRC" ] && [ -d "$SRC/rootfs/overlay" ]; then DIR=$SRC; NEW=$(git -C "$SRC" rev-parse --short HEAD 2>/dev/null || echo local)
 else
   URL=${SRC:-${REMBLEY_REPO:-$REPO}}; [ -n "$URL" ] || { echo "no source: set REPO= in $CONF or pass a git URL / folder"; exit 1; }
@@ -33,6 +36,20 @@ else
   say "checking $URL ${BRANCH:+($BRANCH)}"
   "${GIT[@]}" -C $WORK fetch -q --depth 1 origin ${BRANCH:-HEAD} || { echo "download failed"; exit 1; }
   NEW=$(git -C $WORK rev-parse --short FETCH_HEAD); DIR=$WORK
+fi
+if [ -n "$REPAIR" ]; then
+  [ "$DIR" = $WORK ] && { git -C $WORK checkout -q -f FETCH_HEAD || exit 1; }
+  n=0; miss=0; badn=0
+  while IFS= read -r p; do
+    case "$p" in ''|/*|*..*) continue;; esac
+    src="$DIR/rootfs/overlay/$p"; [ -f "$src" ] || { miss=$((miss + 1)); continue; }
+    case "$(head -c 40 "$src" | head -1)" in                                  # never install a file that does not even parse
+      '#!/bin/sh'*|'#!/bin/bash'*) bash -n "$src" 2>/dev/null || { badn=$((badn + 1)); continue; } ;;
+      '#!/usr/bin/env python3'*) python3 -c "import ast,sys;ast.parse(open(sys.argv[1]).read())" "$src" 2>/dev/null || { badn=$((badn + 1)); continue; } ;;
+    esac
+    mkdir -p "$(dirname "$R/$p")" && cp -a "$src" "$R/$p" && n=$((n + 1))
+  done < "$REPAIR"
+  echo "repaired $n files ($miss not present in the repository version, $badn skipped: failed the syntax check)"; exit 0
 fi
 OLD=$(cat $VER 2>/dev/null || echo none)
 echo "installed: $OLD   available: $NEW"
@@ -73,6 +90,7 @@ if [ "$OLD" != "$NEW" ]; then
   python3 -m compileall -q /usr/local/lib/rembley >/dev/null 2>&1
   glib-compile-schemas /usr/share/glib-2.0/schemas 2>/dev/null; }
   echo "$NEW" > $VER
+  [ -x "$R/usr/local/bin/rembley-repair" ] && python3 "$R/usr/local/bin/rembley-repair" manifest "$DIR/rootfs/overlay" > "$R/usr/share/rembley/MANIFEST.sha256.new" 2>/dev/null && mv "$R/usr/share/rembley/MANIFEST.sha256.new" "$R/usr/share/rembley/MANIFEST.sha256"   # what a complete install looks like now
   # does anything need a reboot? (init / rc.d / sysctl) otherwise just restart the shell
   NEEDBOOT=0; echo "$list" | grep -qE 'sbin/init|rc\.d/' && NEEDBOOT=1
 fi

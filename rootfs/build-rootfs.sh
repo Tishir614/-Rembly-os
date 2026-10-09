@@ -74,6 +74,9 @@ else echo "NOTE: no android-blobs.tar.gz in the image: on first boot the tablet 
 ln -sf /bin/sh "$R/system/bin/sh"        # adbd (started by stage 1) expects /system/bin/sh
 chroot "$R" python3 -m compileall -q /usr/local/lib/rembley     # cached .pyc: faster desktop start on the slow CPU
 date +%s > "$R/etc/rembley/buildtime"
+# what a COMPLETE install looks like: rembley-repair compares the running system with this at every login and fetches what is missing
+python3 "$HERE/rootfs/overlay/usr/local/bin/rembley-repair" manifest "$HERE/rootfs/overlay" > "$R/usr/share/rembley/MANIFEST.sha256"
+printf '%s\n' $PKGS_MIN $( [ "$PROFILE" = desktop ] && echo "$PKGS_DESK" ) | sort -u > "$R/usr/share/rembley/packages.txt"
 chmod +x "$R/usr/sbin/init" "$R"/usr/local/bin/rembley-* "$R"/etc/rembley/rc.d/*.sh "$R/etc/rembley/udhcpc.script"; [ -e "$R/sbin/init" ] || ln -s /usr/sbin/init "$R/sbin/init"
 cleanup; trap - EXIT
 

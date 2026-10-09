@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+"""rembley-repair - finds what is MISSING (or damaged) after a first flash and fetches it for you.
+  rembley-repair check      list missing / changed Rembley files, missing Ubuntu packages, missing connectivity drivers (exit 0 = all complete)
+  rembley-repair fix        repair what can be repaired right now (needs network for downloads)
+  rembley-repair fix --all  also restore files that were CHANGED (overwrites your edits of Rembley's own programs)
+  rembley-repair auto       at every login (started by the desktop): quick local check; if something is missing, wait for the network, then fix
+  rembley-repair fix --from DIR   take the files from a folder with a copy of the repository (USB stick) instead of the network
+  rembley-repair manifest DIR   print the manifest of an overlay folder (used by the image build and by rembley-update)
+Where things come from: Rembley's own files  -> the repository in /etc/rembley/update.conf (same source as rembley-update; only the missing files are copied,
+each must pass a syntax check);  Ubuntu packages -> rembley-pkg (apt);  Wi-Fi/BT drivers -> rembley-drivers (tablet partitions, USB, your own checked URL).
+The expected file list is /usr/share/rembley/MANIFEST.sha256 (made when the image was built / updated), packages: /usr/share/rembley/packages.txt.
+It cannot repair the kernel/boot image (that is flashed from the PC) and it never touches nvram/nvdata or Android partitions."""
+import hashlib, json, os, subprocess, sys, time
+
+ROOT = os.environ.get('REMBLEY_ROOT', '')
+MAN = ROOT + '/usr/share/rembley/MANIFEST.sha256'
+PKGS = ROOT + '/usr/share/rembley/packages.txt'
+STATE = ROOT + '/var/lib/rembley'
+LOG = ROOT + '/var/log/rembley-repair.log'
+CODE = ('usr/local/bin/', 'usr/local/lib/rembley/', 'usr/sbin/init', 'etc/rembley/rc.d/', 'usr/share/rembley/', 'usr/share/themes/Rembley/', 'etc/udev/rules.d/', 'usr/share/applications/rembley')
+SKIP = ('etc/hostname', 'etc/rembley/version', 'etc/rembley/buildtime', 'etc/rembley/pin', 'etc/rembley/timezone', 'etc/rembley/ai.conf', 'etc/rembley/drivers.conf',
+        'etc/rembley/update.conf', 'etc/rembley/device.conf', 'usr/share/rembley/MANIFEST.sha256', 'usr/share/rembley/packages.txt')
+
+
+def log(msg):
+    line = time.strftime('%F %T ') + msg; print(line, flush=True)
+    try:
+        with open(LOG, 'a') as f: f.write(line + '\n')
+    except OSError: pass
+
+
+def sha(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for b in iter(lambda: f.read(1 << 20), b''): h.update(b)
+    return h.hexdigest()
+
+
+def skipped(rel):
+    return rel in SKIP or '__pycache__' in rel or rel.endswith('.pyc')
+
+
+def manifest(d):
+    for dp, dn, fn in os.walk(d):
+        dn.sort()
+        for f in sorted(fn):
+            full = os.path.join(dp, f); rel = os.path.relpath(full, d)
+            if skipped(rel) or os.path.islink(full): continue
+            print('%s  %s' % (sha(full), rel))
+
+
+def load_manifest():
+    out = {}
+    try:
+        for l in open(MAN):
+            h, _, p = l.rstrip('\n').partition('  ')
+            if h and p: out[p] = h
+    except OSError: pass
+    return out
+
+
+def installed(pkg):
+    r = subprocess.run(['dpkg-query', '-W', '-f', '${Status}', pkg], capture_output=True, text=True)
+    return 'install ok installed' in r.stdout
+
+
+def check():
+    man = load_manifest(); res = {'missing': [], 'changed': [], 'packages': [], 'drivers': False, 'manifest': bool(man)}
+    for rel, h in sorted(man.items()):
+        p = ROOT + '/' + rel
+        if not os.path.lexists(p): res['missing'].append(rel)
+        elif rel.startswith(CODE) and os.path.isfile(p) and sha(p) != h: res['changed'].append(rel)
+    try: pk = [l.strip() for l in open(PKGS) if l.strip()]
+    except OSError: pk = []
+    if pk and not ROOT: res['packages'] = [p for p in pk if not installed(p)]
+    res['drivers'] = not ROOT and not os.path.exists('/system/bin/wmt_launcher')
+    return res
+
+
+def problems(r): return len(r['missing']) + len(r['packages']) + (1 if r['drivers'] else 0)
+
+
+def show(r):
+    if not r['manifest']: print('Список файлов (MANIFEST.sha256) не найден: проверка файлов невозможна.')
+    print('Не хватает файлов Rembley: %d' % len(r['missing'])); [print('   - ' + p) for p in r['missing'][:25]]
+    if len(r['missing']) > 25: print('   … и ещё %d' % (len(r['missing']) - 25))
+    print('Изменено вручную/повреждено: %d' % len(r['changed'])); [print('   ~ ' + p) for p in r['changed'][:15]]
+    print('Не хватает пакетов Ubuntu: %d %s' % (len(r['packages']), ' '.join(r['packages'][:20])))
+    print('Драйверы Wi-Fi/BT (из прошивки): %s' % ('НЕ установлены' if r['drivers'] else 'на месте'))
+    print('Итог: ' + ('всё на месте' if problems(r) == 0 else 'есть недостающее: rembley-repair fix'))
+
+
+def online():
+    return subprocess.run('ip route 2>/dev/null | grep -q default', shell=True).returncode == 0
+
+
+def notify(t, b):
+    if not ROOT: subprocess.run(['notify-send', t, b], stderr=subprocess.DEVNULL)
+
+
+def fix(allfiles=False):
+    r = check(); todo = list(r['missing']) + (list(r['changed']) if allfiles else [])
+    if problems(r) == 0 and not todo: log('nothing to repair'); return 0
+    if not online() and not ROOT: log('no network: cannot download yet'); return 2
+    if todo:
+        lst = STATE + '/repair-list.txt'; os.makedirs(STATE, exist_ok=True); open(lst, 'w').write('\n'.join(todo) + '\n')
+        log('restoring %d files from the repository: %s' % (len(todo), ', '.join(todo[:6]) + (' …' if len(todo) > 6 else '')))
+        rc = subprocess.run(['rembley-update', '--repair', lst]).returncode
+        if rc != 0: log('rembley-update --repair failed (rc=%d); is the repository reachable? see /etc/rembley/update.conf' % rc)
+    if r['packages'] and not ROOT:
+        log('installing missing Ubuntu packages: %s' % ' '.join(r['packages'][:12]))
+        subprocess.run(['rembley-pkg', 'update'])
+        for i in range(0, len(r['packages']), 8):                                  # in small groups: one unknown package must not block the rest
+            grp = r['packages'][i:i + 8]
+            if subprocess.run(['rembley-pkg', 'install'] + grp).returncode != 0:
+                for p in grp: subprocess.run(['rembley-pkg', 'install', p])
+    if r['drivers'] and not ROOT:
+        log('connectivity drivers missing: looking for them (tablet partitions, USB, your URL)')
+        subprocess.run(['rembley-drivers', 'install', '--auto'])
+    r2 = check(); left = problems(r2) + (len(r2['changed']) if allfiles else 0)
+    json.dump({'time': int(time.time()), 'before': {k: (len(v) if isinstance(v, list) else v) for k, v in r.items()}, 'left': left}, open(STATE + '/repair.json', 'w'))
+    log('repair finished: %d problem(s) left' % left)
+    return 0 if left == 0 else 1
+
+
+def auto():
+    r = check()
+    if problems(r) == 0: return 0                                                  # the normal case: nothing to do, nothing shown
+    log('login check: %d missing file(s), %d missing package(s), drivers %s' % (len(r['missing']), len(r['packages']), 'missing' if r['drivers'] else 'ok'))
+    notify('Rembley: не хватает файлов', 'Найдено недостающее (%d). Докачаю сам, как только появится сеть.' % problems(r))
+    waited = 0
+    while not online() and waited < 1800: time.sleep(20); waited += 20             # up to 30 minutes for Wi-Fi
+    rc = fix()
+    notify('Rembley: недостающее восстановлено' if rc == 0 else 'Rembley: восстановлено не всё', 'Подробности: rembley-repair check' if rc else 'Проверка пройдена')
+    return rc
+
+
+if __name__ == '__main__':
+    if '--from' in sys.argv: os.environ['REMBLEY_REPO'] = sys.argv[sys.argv.index('--from') + 1]       # offline: a folder with a copy of the repository (USB)
+    cmd = sys.argv[1] if len(sys.argv) > 1 else 'check'
+    if cmd == 'manifest': manifest(sys.argv[2] if len(sys.argv) > 2 else '.')
+    elif cmd == 'check': r = check(); show(r); sys.exit(0 if problems(r) == 0 else 1)
+    elif cmd == 'fix': sys.exit(fix('--all' in sys.argv))
+    elif cmd == 'auto': sys.exit(auto())
+    else: print(__doc__)
