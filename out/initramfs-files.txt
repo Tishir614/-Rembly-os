@@ -13,10 +13,12 @@
 040755        0 system/bin
 100755  1239356 bin/busybox
 100755  1162208 sbin/adbd
-100755     5554 init
+100755     7465 init
 100644       77 etc/mdev.conf
 100644     6381 splash.32.gz
 100644     3625 splash.16.gz
+100644    73251 noroot.32.gz
+100644    45601 noroot.16.gz
 120777        7 bin/sh
 120777       17 system/bin/sh
 100755      929 bin/rembly-bootanim
