@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Rembly Code
+Name[ru]=Rembly Code
+Comment=Лёгкий редактор кода в духе VS Code: проводник, вкладки, подсветка, терминал, запуск по F5
+Exec=rembly-code %F
+Icon=applications-development
+Terminal=false
+Categories=Development;TextEditor;IDE;
+MimeType=text/plain;text/markdown;text/x-python;text/x-csrc;text/x-chdr;text/x-c++src;text/x-shellscript;text/html;text/css;text/x-script.python;application/json;application/javascript;application/x-shellscript;application/xml;text/x-makefile;text/x-java;text/x-go;text/x-rust;text/x-lua;text/x-php;

@@ -47,11 +47,14 @@ PKGS_DESK="xserver-xorg-core xdotool ntfs-3g exfat-fuse exfat-utils xserver-xorg
  xfwm4 xfce4-settings xfce4-terminal xfce4-taskmanager xfce4-appfinder thunar mousepad dbus-x11 \
  python3-gi python3-gi-cairo gir1.2-gtk-3.0 python3-pil wmctrl playerctl onboard \
  fonts-noto-core fonts-dejavu-core papirus-icon-theme adwaita-icon-theme gtk2-engines-pixbuf \
- libglib2.0-bin qt5-gtk-platformtheme libfuse2 squashfs-tools desktop-file-utils shared-mime-info netsurf-gtk geany galculator mpv gpicview atril audacious file-roller \
+ libglib2.0-bin qt5-gtk-platformtheme libfuse2 squashfs-tools desktop-file-utils shared-mime-info netsurf-gtk geany galculator mpv atril file-roller \
+ gir1.2-gtksource-4 gir1.2-vte-2.91 python3-mutagen \
  dunst libnotify-bin xprintidle scrot x11-xkb-utils xdg-utils fonts-firacode"
 chroot "$R" /usr/bin/env DEBIAN_FRONTEND=noninteractive sh -ec "
   apt-get update
   apt-get install -y --no-install-recommends $PKGS_MIN $( [ "$PROFILE" = desktop ] && echo "$PKGS_DESK" )
+  # 0.28: Rembly Player replaced audacious and gpicview; a tree built by an older version still has them (and their libraries)
+  apt-get purge -y audacious gpicview >/dev/null 2>&1 || true; apt-get autoremove --purge -y >/dev/null 2>&1 || true
   for l in ru_RU.UTF-8 en_US.UTF-8; do locale-gen \$l >/dev/null 2>&1 || true; done; update-locale LANG=ru_RU.UTF-8 2>/dev/null || true
   ln -sf /usr/share/zoneinfo/UTC /etc/localtime; echo UTC > /etc/timezone
   echo root:rembly | chpasswd

@@ -1,0 +1,32 @@
+#!/usr/bin/env python3
+"""rembly-matrix - digital rain on the whole screen (hacker style screensaver). Touch the screen or press any key to leave.
+It draws one new glyph per column per frame (about 8 frames/s), so it is light enough for this tablet; it pauses itself while the system is busy.
+usage: rembly-matrix"""
+import os, sys
+sys.path[:0] = ['/usr/local/lib/rembly', os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'lib', 'rembly')]
+os.environ.setdefault('REMBLY_STYLE', 'hacker')                       # the rain is green even when the desktop style is classic
+import remblyui as ui
+from remblyui import Gtk, Gdk
+
+
+class Rain(Gtk.Window):
+    def __init__(self):
+        super().__init__(title='Matrix'); ui.init_theme(); sw, sh = ui.screen_size()
+        self.set_decorated(False); self.set_default_size(sw, sh); self.move(0, 0); self.fullscreen(); self.set_keep_above(True)
+        self.area = Gtk.DrawingArea(); self.add(self.area); self.rain = ui.MatrixRain(sw, sh, self.area, fps=10)
+        self.area.add_events(Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.TOUCH_MASK | Gdk.EventMask.KEY_PRESS_MASK)
+        self.area.connect('draw', self.draw); self.connect('button-press-event', self.bye); self.connect('key-press-event', self.bye); self.connect('touch-event', self.bye)
+        blank = Gdk.Cursor.new_for_display(Gdk.Display.get_default(), Gdk.CursorType.BLANK_CURSOR)
+        self.connect('realize', lambda w: w.get_window().set_cursor(blank))
+        for _ in range(60): self.rain.step()                           # start with a screen that is already raining
+        self.rain.start()
+
+    def draw(self, w, cr):
+        cr.set_source_rgb(0, 0.012, 0.004); cr.paint(); self.rain.paint(cr); return False
+
+    def bye(self, *a):
+        self.rain.stop(); Gtk.main_quit(); return True
+
+
+if __name__ == '__main__':
+    w = Rain(); w.show_all(); Gtk.main()

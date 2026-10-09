@@ -1,0 +1,888 @@
+#!/usr/bin/env python3
+"""Rembly Player - music, video and photos in one touch-first app for this tablet.
+Music: library with tags and covers, waveform seek bar, queue, shuffle/repeat, MPRIS (playerctl and the desktop's media card control it).
+Video: mpv embedded (x11 output, software decode, late frames are dropped), tap = controls, double tap left/right = -10 s / +10 s, resumes where you stopped.
+Photos: thumbnail grid (cached), swipe to turn the page, pinch / double tap to zoom, slideshow.
+Playback quality depends on the SoC: ~720p H.264 is the comfortable limit, the player tells you when frames are being dropped.
+usage: rembly-player [FILE | FOLDER ...]"""
+import json, os, random, signal, sys, threading, time
+sys.path[:0] = ['/usr/local/lib/rembly', os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'lib', 'rembly')]
+import gi
+gi.require_version('Gtk', '3.0'); gi.require_version('Gdk', '3.0')
+from gi.repository import Gtk, Gdk, GLib, GdkPixbuf, Gio, Pango
+import cairo
+try:
+    gi.require_version('GdkX11', '3.0'); from gi.repository import GdkX11
+except (ValueError, ImportError):
+    GdkX11 = None
+import remblyui as ui
+import rembly_media as media
+
+CFGF = os.path.join(ui.CFG, 'player.json')
+CSS = b"""
+.rplayer .tabbtn { min-height: 50px; padding: 0 22px; font-family: 'Fira Code', monospace; font-size: 15px; letter-spacing: 1px; }
+.rplayer .tabbtn.cur { background-image: none; background-color: #f4f4f4; color: #050505; }
+.rplayer .tabbtn.cur label { color: #050505; }
+.rplayer .hud { font-family: 'Fira Code', monospace; font-size: 12px; color: #cfcfcf; }
+.rplayer .ptitle { font-size: 24px; font-weight: 600; }
+.rplayer .partist { font-size: 16px; color: #dcdcdc; }
+.rplayer .tport { min-width: 62px; min-height: 62px; padding: 0; border-radius: 31px; }
+.rplayer .tport-big { min-width: 76px; min-height: 76px; border-radius: 38px; background-image: none; background-color: #f4f4f4; }
+.rplayer .tport.on { background-image: none; background-color: rgba(255,255,255,0.25); }
+.rplayer iconview { background-color: transparent; }
+.rplayer iconview:selected { background-color: rgba(255,255,255,0.20); }
+.rplayer .vbar { background-color: rgba(0,0,0,0.80); border-top: 1px solid rgba(255,255,255,0.3); }
+.rplayer .warn { color: #ffffff; font-family: 'Fira Code', monospace; font-size: 12px; background-color: rgba(255,255,255,0.12); padding: 4px 10px; border-radius: 4px; }
+"""
+
+
+def load_cfg():
+    try: return json.load(open(CFGF))
+    except Exception: return {}
+
+
+def save_cfg(c):
+    try: os.makedirs(ui.CFG, exist_ok=True); json.dump(c, open(CFGF, 'w'))
+    except OSError: pass
+
+
+def icon_btn(names, px=26, tip=None, cls=None, cb=None):
+    b = Gtk.Button()
+    if cls is None: b.set_relief(Gtk.ReliefStyle.NONE)
+    b.add(ui.icon(names, px))
+    if tip: b.set_tooltip_text(tip)
+    if cls:
+        for c in cls.split(): b.get_style_context().add_class(c)
+    if cb: b.connect('clicked', lambda _b: cb())
+    return b
+
+
+def pix_from_bytes(data, size):
+    try:
+        ld = GdkPixbuf.PixbufLoader(); ld.write(data); ld.close(); pb = ld.get_pixbuf()
+        return pb.scale_simple(size, size, GdkPixbuf.InterpType.BILINEAR) if pb else None
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------- widgets
+class Cover(Gtk.DrawingArea):
+    """framed square cover, like the fetch card on the desktop; the fox when there is no cover"""
+    def __init__(self, size):
+        super().__init__(); self.size = size; self.pb = None; self.set_size_request(size, size)
+        try: self.fox = GdkPixbuf.Pixbuf.new_from_file_at_size(os.path.join(ui.SHARE, 'logo-mark.png'), int(size * 0.55), int(size * 0.55))
+        except Exception: self.fox = None
+
+    def set_pix(self, pb): self.pb = pb; self.queue_draw()
+
+    def do_draw(self, cr):
+        s = self.size; cr.set_source_rgb(0.04, 0.04, 0.04); cr.rectangle(0, 0, s, s); cr.fill()
+        if self.pb is not None: Gdk.cairo_set_source_pixbuf(cr, self.pb, 3, 3); cr.paint()
+        elif self.fox is not None:
+            Gdk.cairo_set_source_pixbuf(cr, self.fox, (s - self.fox.get_width()) / 2, (s - self.fox.get_height()) / 2); cr.paint_with_alpha(0.55)
+        cr.set_source_rgb(0.94, 0.94, 0.94); cr.set_line_width(1.2); cr.rectangle(0.5, 0.5, s - 1, s - 1); cr.stroke()
+        cr.set_source_rgba(1, 1, 1, 0.25); cr.rectangle(3.5, 3.5, s - 7, s - 7); cr.stroke()
+        return False
+
+
+class PlayGlyph(Gtk.DrawingArea):
+    """play / pause symbol drawn in dark ink for the big white round button (the stock glyphs are white)"""
+    def __init__(self, size):
+        super().__init__(); self.playing = False; self.size = size; self.set_size_request(size, size); self.set_halign(Gtk.Align.CENTER); self.set_valign(Gtk.Align.CENTER)
+
+    def do_draw(self, cr):
+        W, H = self.get_allocated_width(), self.get_allocated_height(); s = min(W, H, self.size * 2); cr.translate((W - s) / 2.0, (H - s) / 2.0); cr.set_source_rgb(0.02, 0.02, 0.02)
+        if self.playing: cr.rectangle(s * 0.22, s * 0.16, s * 0.18, s * 0.68); cr.rectangle(s * 0.60, s * 0.16, s * 0.18, s * 0.68)
+        else: cr.move_to(s * 0.28, s * 0.14); cr.line_to(s * 0.86, s * 0.5); cr.line_to(s * 0.28, s * 0.86); cr.close_path()
+        cr.fill(); return False
+
+
+class WaveSeek(Gtk.DrawingArea):
+    """seek bar drawn as the track's real waveform (peaks decoded by mpv); plain bar until the waveform is ready; touch or drag to seek"""
+    def __init__(self, on_seek):
+        super().__init__(); self.set_size_request(-1, 64); self.peaks = None; self.frac = 0.0; self.on_seek = on_seek; self.drag = False
+        self.add_events(Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.BUTTON_RELEASE_MASK | Gdk.EventMask.POINTER_MOTION_MASK | Gdk.EventMask.BUTTON1_MOTION_MASK | Gdk.EventMask.TOUCH_MASK)
+        self.connect('button-press-event', self.press); self.connect('motion-notify-event', self.move); self.connect('button-release-event', self.release)
+
+    def set_state(self, frac, peaks=None, keep=True):
+        if peaks is not None or not keep: self.peaks = peaks
+        if not self.drag: self.frac = max(0.0, min(1.0, frac))
+        self.queue_draw()
+
+    def at(self, e): return max(0.0, min(1.0, e.x / max(1, self.get_allocated_width())))
+    def press(self, w, e): self.drag = True; self.frac = self.at(e); self.queue_draw(); return True
+    def move(self, w, e):
+        if self.drag: self.frac = self.at(e); self.queue_draw()
+        return True
+
+    def release(self, w, e):
+        if self.drag: self.drag = False; self.frac = self.at(e); self.on_seek(self.frac); self.queue_draw()
+        return True
+
+    def do_draw(self, cr):
+        w, h = self.get_allocated_width(), self.get_allocated_height(); mid = h / 2.0
+        n = len(self.peaks) if self.peaks else 0
+        if n:
+            bw = w / float(n)
+            for i, p in enumerate(self.peaks):
+                a = 1.0 if (i + 0.5) / n <= self.frac else 0.30
+                cr.set_source_rgba(1, 1, 1, a); bh = max(2.0, p * (h - 8)); cr.rectangle(i * bw + 0.5, mid - bh / 2, max(1.0, bw - 1.5), bh); cr.fill()
+        else:
+            cr.set_source_rgba(1, 1, 1, 0.22); cr.rectangle(0, mid - 3, w, 6); cr.fill(); cr.set_source_rgba(1, 1, 1, 1); cr.rectangle(0, mid - 3, w * self.frac, 6); cr.fill()
+        x = w * self.frac; cr.set_source_rgba(1, 1, 1, 1); cr.set_line_width(2); cr.move_to(x, 2); cr.line_to(x, h - 2); cr.stroke()
+        return False
+
+
+# ---------------------------------------------------------------- MPRIS (playerctl, media keys, the desktop's media card)
+MPRIS_XML = """<node>
+<interface name="org.mpris.MediaPlayer2"><method name="Raise"/><method name="Quit"/>
+<property name="CanQuit" type="b" access="read"/><property name="CanRaise" type="b" access="read"/><property name="HasTrackList" type="b" access="read"/>
+<property name="Identity" type="s" access="read"/><property name="SupportedUriSchemes" type="as" access="read"/><property name="SupportedMimeTypes" type="as" access="read"/></interface>
+<interface name="org.mpris.MediaPlayer2.Player">
+<method name="Next"/><method name="Previous"/><method name="Pause"/><method name="PlayPause"/><method name="Stop"/><method name="Play"/>
+<method name="Seek"><arg direction="in" name="Offset" type="x"/></method>
+<method name="SetPosition"><arg direction="in" name="TrackId" type="o"/><arg direction="in" name="Position" type="x"/></method>
+<property name="PlaybackStatus" type="s" access="read"/><property name="Metadata" type="a{sv}" access="read"/><property name="Position" type="x" access="read"/>
+<property name="Volume" type="d" access="readwrite"/><property name="Rate" type="d" access="read"/><property name="CanGoNext" type="b" access="read"/><property name="CanGoPrevious" type="b" access="read"/>
+<property name="CanPlay" type="b" access="read"/><property name="CanPause" type="b" access="read"/><property name="CanSeek" type="b" access="read"/><property name="CanControl" type="b" access="read"/>
+</interface></node>"""
+
+
+class Mpris:
+    def __init__(self, app):
+        self.app = app; self.conn = None
+        try:
+            self.conn = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+            info = Gio.DBusNodeInfo.new_for_xml(MPRIS_XML)
+            for itf in info.interfaces:
+                self.conn.register_object('/org/mpris/MediaPlayer2', itf, self.call, self.get, self.set)
+            Gio.bus_own_name_on_connection(self.conn, 'org.mpris.MediaPlayer2.rembly', Gio.BusNameOwnerFlags.NONE, None, None)
+        except Exception:
+            self.conn = None                                         # no session bus (e.g. started over ssh): the player works the same without it
+
+    def meta(self):
+        a = self.app; t = a.now or {}
+        d = {'mpris:trackid': GLib.Variant('o', '/org/rembly/track/%d' % (abs(hash(t.get('path', ''))) % 10 ** 8)), 'xesam:title': GLib.Variant('s', t.get('t', '')),
+             'xesam:artist': GLib.Variant('as', [t['a']] if t.get('a') else []), 'xesam:album': GLib.Variant('s', t.get('b', ''))}
+        if t.get('d'): d['mpris:length'] = GLib.Variant('x', int(t['d'] * 1000000))
+        return d
+
+    def props(self, name):
+        a = self.app
+        if name == 'PlaybackStatus': return GLib.Variant('s', a.status())
+        if name == 'Metadata': return GLib.Variant('a{sv}', self.meta())
+        if name == 'Position': return GLib.Variant('x', int((a.st.get('time-pos') or 0) * 1000000))
+        if name == 'Volume': return GLib.Variant('d', a.volume / 100.0)
+        if name == 'Rate': return GLib.Variant('d', 1.0)
+        if name in ('CanGoNext', 'CanGoPrevious'): return GLib.Variant('b', bool(a.queue))
+        if name in ('CanPlay', 'CanPause', 'CanSeek', 'CanControl'): return GLib.Variant('b', True)
+        return None
+
+    def get(self, conn, sender, path, itf, name):
+        if itf == 'org.mpris.MediaPlayer2':
+            return {'CanQuit': GLib.Variant('b', True), 'CanRaise': GLib.Variant('b', True), 'HasTrackList': GLib.Variant('b', False), 'Identity': GLib.Variant('s', 'Rembly Player'),
+                    'SupportedUriSchemes': GLib.Variant('as', ['file']), 'SupportedMimeTypes': GLib.Variant('as', ['audio/mpeg', 'audio/flac', 'audio/ogg', 'video/mp4'])}.get(name)
+        return self.props(name)
+
+    def set(self, conn, sender, path, itf, name, value):
+        if name == 'Volume': GLib.idle_add(self.app.set_volume, int(value.get_double() * 100))
+        return True
+
+    def call(self, conn, sender, path, itf, method, params, inv):
+        a = self.app
+        fn = {'Next': a.next, 'Previous': a.prev, 'Pause': lambda: a.pause(True), 'Play': lambda: a.pause(False), 'PlayPause': a.toggle, 'Stop': a.stop,
+              'Seek': lambda: a.seek_rel(params.unpack()[0] / 1000000.0), 'SetPosition': lambda: a.seek_abs(params.unpack()[1] / 1000000.0), 'Raise': a.win.present, 'Quit': a.win.close}.get(method)
+        if fn: GLib.idle_add(lambda: (fn(), False)[1])
+        inv.return_value(None)
+
+    def changed(self):
+        if not self.conn: return
+        try:
+            self.conn.emit_signal(None, '/org/mpris/MediaPlayer2', 'org.freedesktop.DBus.Properties', 'PropertiesChanged',
+                                  GLib.Variant('(sa{sv}as)', ('org.mpris.MediaPlayer2.Player', {'PlaybackStatus': self.props('PlaybackStatus'), 'Metadata': self.props('Metadata')}, [])))
+        except Exception: pass
+
+
+# ---------------------------------------------------------------- the app
+class Player(Gtk.Application):
+    def __init__(self):
+        super().__init__(application_id='org.rembly.Player', flags=Gio.ApplicationFlags.HANDLES_OPEN)
+        self.cfg = load_cfg(); self.volume = int(self.cfg.get('vol', 80)); self.shuffle = bool(self.cfg.get('shuffle', False)); self.repeat = self.cfg.get('repeat', 'all')
+        self.mp = None; self.mp_kind = None; self.st = {}; self.now = None; self.queue = []; self.qpos = -1; self.order = []; self.tags = media.Tags(); self.extra = []
+        self.tracks = []; self.vids = []; self.imgs = []; self.win = None; self.mpris = None; self.wave_job = 0; self.fs = False; self.last_ui = 0; self.pos_saved = 0
+        self.thumb_q = []; self.thumb_lock = threading.Lock(); self.thumb_busy = False; self.slide_id = 0; self.ctl_hide_id = 0; self.pending_seek = None; self.input_conf = None
+
+    # ------------- lifecycle
+    def do_startup(self):
+        Gtk.Application.do_startup(self)
+        act = Gio.SimpleAction.new('tab', GLib.VariantType.new('s')); act.connect('activate', lambda a, v: (self.ensure_window(), self.show_tab(v.get_string()))); self.add_action(act)
+
+    def do_activate(self):
+        self.ensure_window()
+
+    def do_open(self, files, n, hint):
+        self.ensure_window(); paths = [f.get_path() for f in files if f.get_path()]
+        dirs = [p for p in paths if os.path.isdir(p)]; fl = [p for p in paths if os.path.isfile(p)]
+        if dirs: self.extra += dirs; self.rescan()
+        if fl:
+            k = media.kind_of(fl[0])
+            if k == 'audio': self.play_list([p for p in fl if media.kind_of(p) == 'audio'], 0); self.show_tab('music')
+            elif k == 'video': self.open_video(fl[0])
+            elif k == 'image': self.open_image(fl[0], fl)
+
+    def ensure_window(self):
+        if self.win: self.win.present(); return
+        ui.init_theme(); p = Gtk.CssProvider(); p.load_from_data(CSS); Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), p, Gtk.STYLE_PROVIDER_PRIORITY_USER)
+        sw, sh = ui.screen_size(); self.narrow = sw < 1000
+        w = self.win = Gtk.ApplicationWindow(application=self, title='Rembly Player'); ui.style_app(w); w.get_style_context().add_class('rplayer')
+        w.set_default_size(min(1180, sw), min(740, sh - 60)); w.set_position(Gtk.WindowPosition.CENTER)
+        if sw <= 1100: w.maximize()
+        self.build(); self.mpris = Mpris(self)
+        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP): GLib.unix_signal_add(GLib.PRIORITY_HIGH, int(sig), self.on_signal)         # kill / Ctrl+C: stop mpv and save, do not leave it behind
+        w.connect('delete-event', self.on_close); w.connect('key-press-event', self.on_key); w.show_all()
+        self.set_chrome(True); self.show_tab(self.cfg.get('tab', 'music') if self.cfg.get('tab') in ('music', 'video', 'image') else 'music')
+        GLib.idle_add(self.rescan); GLib.timeout_add(250, self.tick)
+
+    def on_signal(self):
+        self.on_close(); self.quit(); return False
+
+    def on_close(self, *a):
+        self.save_pos(force=True); self.cfg.update(vol=self.volume, shuffle=self.shuffle, repeat=self.repeat); save_cfg(self.cfg); self.tags.save(); media.prune_thumbs()
+        self.kill_mpv(); return False
+
+    # ------------- layout
+    def build(self):
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL); self.win.add(root)
+        self.top = Gtk.Box(spacing=8); self.top.set_margin_start(10); self.top.set_margin_end(10); self.top.set_margin_top(8); self.top.set_margin_bottom(6); root.pack_start(self.top, False, False, 0)
+        self.tabs = {}
+        for key, ic, txt in (('music', ['audio-x-generic', 'multimedia-audio-player'], 'МУЗЫКА'), ('video', ['video-x-generic', 'multimedia-video-player'], 'ВИДЕО'), ('image', ['image-x-generic', 'camera-photo'], 'ФОТО')):
+            b = Gtk.Button(); b.get_style_context().add_class('tabbtn'); box = Gtk.Box(spacing=8); box.pack_start(ui.icon(ic, 22), False, False, 0)
+            if not self.narrow: box.pack_start(Gtk.Label(label='[ %s ]' % txt), False, False, 0)
+            else: box.pack_start(Gtk.Label(label=txt), False, False, 0)
+            b.add(box); b.connect('clicked', lambda _b, k=key: self.show_tab(k)); self.tabs[key] = b; self.top.pack_start(b, False, False, 0)
+        self.search = Gtk.SearchEntry(); self.search.set_placeholder_text('> поиск'); self.search.set_width_chars(18); self.search.connect('search-changed', lambda *_: self.refilter())
+        self.search.connect('focus-in-event', lambda *_: ui.osk(True)); self.top.pack_end(self.search, False, False, 0)
+        self.warn = Gtk.Label(label=''); self.warn.get_style_context().add_class('warn'); self.warn.set_no_show_all(True); self.top.pack_end(self.warn, False, False, 6)
+        self.stack = Gtk.Stack(); root.pack_start(self.stack, True, True, 0)
+        self.stack.add_named(self.build_music(), 'music')
+        self.grid_v = self.build_grid('video'); self.stack.add_named(self.grid_v[0], 'video')
+        self.grid_i = self.build_grid('image'); self.stack.add_named(self.grid_i[0], 'image')
+        self.stack.add_named(self.build_vplay(), 'vplay'); self.stack.add_named(self.build_viewer(), 'viewer')
+
+    def build_music(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL if self.narrow else Gtk.Orientation.HORIZONTAL, spacing=10); box.set_margin_start(10); box.set_margin_end(10); box.set_margin_bottom(10)
+        self.mstore = Gtk.ListStore(str, str, str, str)                               # title, artist, time, path
+        self.mfilter = self.mstore.filter_new(); self.mfilter.set_visible_func(self.vis_music)
+        self.mview = Gtk.TreeView(model=self.mfilter); self.mview.set_headers_visible(False); self.mview.set_activate_on_single_click(True); self.mview.set_fixed_height_mode(False)
+        for i, (w, ell) in enumerate(((0, True), (0, True), (60, False))):
+            r = Gtk.CellRendererText(); r.set_property('ypad', 9); r.set_property('xpad', 8)
+            if ell: r.set_property('ellipsize', Pango.EllipsizeMode.END)
+            if i == 1: r.set_property('foreground', '#bdbdbd')
+            if i == 2: r.set_property('xalign', 1.0)
+            col = Gtk.TreeViewColumn('', r, text=i); col.set_expand(i < 2); self.mview.append_column(col)
+        self.mview.connect('row-activated', self.on_track)
+        sc = Gtk.ScrolledWindow(); sc.add(self.mview); sc.set_size_request(380 if not self.narrow else -1, 150 if self.narrow else -1); box.pack_start(sc, True, True, 0)
+        self.mcount = Gtk.Label(xalign=0); self.mcount.get_style_context().add_class('hud')
+        side = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8); side.set_size_request(400 if not self.narrow else -1, -1)
+        top = Gtk.Box(spacing=14, orientation=Gtk.Orientation.HORIZONTAL if self.narrow else Gtk.Orientation.VERTICAL)
+        self.cover = Cover(110 if self.narrow else 300); top.pack_start(self.cover, False, False, 0)
+        info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        self.m_title = Gtk.Label(label='Ничего не играет', xalign=0); self.m_title.get_style_context().add_class('ptitle'); self.m_title.set_ellipsize(Pango.EllipsizeMode.END)
+        self.m_artist = Gtk.Label(label='', xalign=0); self.m_artist.get_style_context().add_class('partist'); self.m_artist.set_ellipsize(Pango.EllipsizeMode.END)
+        self.m_hud = Gtk.Label(label='> idle', xalign=0); self.m_hud.get_style_context().add_class('hud'); self.m_hud.set_ellipsize(Pango.EllipsizeMode.END)
+        for l in (self.m_title, self.m_artist, self.m_hud): info.pack_start(l, False, False, 0)
+        top.pack_start(info, True, True, 0); side.pack_start(top, False, False, 0)
+        self.wave = WaveSeek(lambda f: self.seek_abs(f * (self.st.get('duration') or 0))); side.pack_start(self.wave, False, False, 0)
+        tl = Gtk.Box(); self.t_pos = Gtk.Label(label='0:00'); self.t_len = Gtk.Label(label='0:00')
+        for l in (self.t_pos, self.t_len): l.get_style_context().add_class('hud')
+        tl.pack_start(self.t_pos, False, False, 0); tl.pack_end(self.t_len, False, False, 0); side.pack_start(tl, False, False, 0)
+        tr = Gtk.Box(spacing=10, halign=Gtk.Align.CENTER)
+        self.b_shuf = icon_btn(['media-playlist-shuffle', 'media-playlist-shuffle-symbolic'], 24, 'Вперемешку', 'tport', self.toggle_shuffle)
+        self.b_prev = icon_btn(['media-skip-backward'], 28, 'Предыдущий', 'tport', self.prev)
+        self.b_play = icon_btn(['media-playback-start'], 34, 'Играть / пауза', 'tport tport-big', self.toggle); self.swap_glyph(self.b_play, 32)
+        self.b_next = icon_btn(['media-skip-forward'], 28, 'Следующий', 'tport', self.next)
+        self.b_rep = icon_btn(['media-playlist-repeat', 'media-playlist-repeat-symbolic'], 24, 'Повтор', 'tport', self.cycle_repeat)
+        for b in (self.b_shuf, self.b_prev, self.b_play, self.b_next, self.b_rep): tr.pack_start(b, False, False, 0)
+        side.pack_start(tr, False, False, 6)
+        vr = Gtk.Box(spacing=8); vr.pack_start(ui.icon(['audio-volume-high', 'audio-volume-medium'], 22), False, False, 0)
+        self.vol = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 130, 1); self.vol.set_draw_value(False); self.vol.set_value(self.volume); self.vol.connect('value-changed', lambda w: self.set_volume(int(w.get_value())))
+        vr.pack_start(self.vol, True, True, 0); side.pack_start(vr, False, False, 0); side.pack_end(self.mcount, False, False, 0)
+        box.pack_start(side, False, False, 0); self.sync_toggles(); return box
+
+    def build_grid(self, kind):
+        st = Gtk.ListStore(GdkPixbuf.Pixbuf, str, str)                              # thumbnail, label, path
+        v = Gtk.IconView(model=st); v.set_pixbuf_column(0); v.set_text_column(1); v.set_item_width(150 if self.narrow else 190); v.set_columns(-1); v.set_margin(6)
+        v.set_spacing(4); v.set_row_spacing(6); v.set_column_spacing(6); v.set_activate_on_single_click(True); v.connect('item-activated', lambda iv, p, k=kind: self.on_grid(k, p))
+        for r in v.get_cells():
+            if isinstance(r, Gtk.CellRendererText): r.set_property('ellipsize', Pango.EllipsizeMode.MIDDLE); r.set_property('wrap-width', -1); r.set_property('xalign', 0.5); r.set_property('size-points', 9.0)
+        sc = Gtk.ScrolledWindow(); sc.add(v); sc.get_vadjustment().connect('value-changed', lambda *_: GLib.idle_add(self.load_visible, kind))
+        v.connect('size-allocate', lambda *_: GLib.idle_add(self.load_visible, kind))
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL); box.set_margin_start(10); box.set_margin_end(10); box.set_margin_bottom(10)
+        self.empty = getattr(self, 'empty', {}); lab = Gtk.Label(label='', xalign=0); lab.get_style_context().add_class('hud'); self.empty[kind] = lab
+        box.pack_start(lab, False, False, 4); box.pack_start(sc, True, True, 0); return box, st, v, lab
+
+    # ---- video page
+    def build_vplay(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL); box.get_style_context().add_class('vplay')
+        self.vdraw = Gtk.DrawingArea(); self.vdraw.set_hexpand(True); self.vdraw.set_vexpand(True); self.vdraw.connect('draw', lambda w, cr: (cr.set_source_rgb(0, 0, 0), cr.paint(), True)[2])
+        box.pack_start(self.vdraw, True, True, 0)
+        self.vbar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4); self.vbar.get_style_context().add_class('vbar'); self.vbar.set_margin_start(0)
+        self.v_title = Gtk.Label(label='', xalign=0); self.v_title.get_style_context().add_class('hud'); self.v_title.set_margin_start(12); self.v_title.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+        sr = Gtk.Box(spacing=10); sr.set_margin_start(12); sr.set_margin_end(12); self.v_pos = Gtk.Label(label='0:00'); self.v_len = Gtk.Label(label='0:00')
+        for l in (self.v_pos, self.v_len): l.get_style_context().add_class('hud')
+        self.v_seek = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 1000, 1); self.v_seek.set_draw_value(False); self.v_seek.connect('button-press-event', lambda *a: setattr(self, 'seeking', True) or False)
+        self.v_seek.connect('button-release-event', self.v_seek_done); self.seeking = False
+        sr.pack_start(self.v_pos, False, False, 0); sr.pack_start(self.v_seek, True, True, 0); sr.pack_start(self.v_len, False, False, 0)
+        cr_ = Gtk.Box(spacing=8, halign=Gtk.Align.CENTER); cr_.set_margin_bottom(8)
+        self.v_play = icon_btn(['media-playback-start'], 30, 'Играть / пауза', 'tport tport-big', self.toggle); self.swap_glyph(self.v_play, 28)
+        for ic, tip, fn in ((['view-grid', 'go-previous'], 'К списку', self.close_video), (['media-seek-backward'], '−10 с', lambda: self.seek_rel(-10)), (None, None, None), (['media-seek-forward'], '+10 с', lambda: self.seek_rel(10)),
+                            (['media-playlist-repeat'], 'Скорость', self.cycle_speed), (['format-justify-center', 'subtitles'], 'Субтитры', lambda: self.mp and self.mp.cmd('cycle', 'sub')),
+                            (['audio-x-generic'], 'Звуковая дорожка', lambda: self.mp and self.mp.cmd('cycle', 'audio')), (['view-fullscreen'], 'Во весь экран', self.toggle_fs)):
+            if ic is None: cr_.pack_start(self.v_play, False, False, 0); continue
+            cr_.pack_start(icon_btn(ic, 26, tip, 'tport', fn), False, False, 0)
+        self.v_speed = Gtk.Label(label='1×'); self.v_speed.get_style_context().add_class('hud'); cr_.pack_start(self.v_speed, False, False, 6)
+        for w in (self.v_title, sr, cr_): self.vbar.pack_start(w, False, False, 0)
+        box.pack_start(self.vbar, False, False, 0); return box
+
+    # ---- photo viewer
+    def build_viewer(self):
+        ov = Gtk.Overlay(); self.canvas = Gtk.DrawingArea(); self.canvas.set_hexpand(True); self.canvas.set_vexpand(True); ov.add(self.canvas)
+        self.canvas.add_events(Gdk.EventMask.TOUCH_MASK | Gdk.EventMask.SCROLL_MASK | Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.BUTTON_RELEASE_MASK | Gdk.EventMask.POINTER_MOTION_MASK | Gdk.EventMask.BUTTON1_MOTION_MASK)
+        self.canvas.connect('draw', self.draw_image); self.canvas.connect('scroll-event', self.on_wheel)
+        self.pix = None; self.pix_fit = None; self.zoom = 1.0; self.off = [0.0, 0.0]; self.img_path = None; self.img_list = []; self.img_idx = 0; self.loading = False; self.base_zoom = 1.0; self.base_off = [0, 0]
+        self.g_zoom = Gtk.GestureZoom.new(self.canvas); self.g_zoom.connect('begin', self.zoom_begin); self.g_zoom.connect('scale-changed', self.zoom_changed)
+        self.g_drag = Gtk.GestureDrag.new(self.canvas); self.g_drag.set_button(0); self.g_drag.connect('drag-begin', self.drag_begin); self.g_drag.connect('drag-update', self.drag_update); self.g_drag.connect('drag-end', self.drag_end)
+        self.g_tap = Gtk.GestureMultiPress.new(self.canvas); self.g_tap.set_button(0); self.g_tap.connect('released', self.tapped)
+        bar = Gtk.Box(spacing=6); bar.set_halign(Gtk.Align.CENTER); bar.set_valign(Gtk.Align.END); bar.set_margin_bottom(16); bar.get_style_context().add_class('vbar')
+        self.i_name = Gtk.Label(label=''); self.i_name.get_style_context().add_class('hud')
+        for ic, tip, fn in ((['view-grid', 'view-list-icons'], 'К сетке', self.close_image), (['go-previous', 'media-skip-backward'], 'Назад', lambda: self.step_image(-1)), (['zoom-out'], 'Меньше', lambda: self.zoom_by(0.7)),
+                            (['zoom-fit-best', 'zoom-original'], 'По размеру', self.zoom_fit), (['zoom-in'], 'Крупнее', lambda: self.zoom_by(1.4)), (['go-next', 'media-skip-forward'], 'Вперёд', lambda: self.step_image(1)),
+                            (['object-rotate-right'], 'Повернуть', self.rotate), (['media-playback-start'], 'Слайдшоу', self.toggle_slides), (['view-fullscreen'], 'Во весь экран', self.toggle_fs)):
+            b = icon_btn(ic, 26, tip, 'tport', fn); bar.pack_start(b, False, False, 0)
+        bar.pack_start(self.i_name, False, False, 8); self.ibar = bar; ov.add_overlay(bar); return ov
+
+    # ------------- chrome / tabs
+    def set_chrome(self, on):
+        self.top.set_visible(on)
+
+    def show_tab(self, key):
+        self.stop_slides()
+        if self.stack.get_visible_child_name() in ('vplay',): self.close_video()
+        self.stack.set_visible_child_name(key); self.cur_tab = key; self.cfg['tab'] = key; self.set_chrome(True); self.win.unfullscreen(); self.fs = False
+        for k, b in self.tabs.items():
+            sc = b.get_style_context()
+            sc.add_class('cur') if k == key else sc.remove_class('cur')
+        self.search.set_text(''); self.refilter()
+        if key != 'music': GLib.idle_add(self.load_visible, key)
+
+    def on_key(self, w, e):
+        k = Gdk.keyval_name(e.keyval); page = self.stack.get_visible_child_name()
+        if self.search.has_focus() and k not in ('Escape',): return False
+        if k == 'space': self.toggle(); return True
+        if k == 'Escape':
+            if self.fs: self.toggle_fs(); return True
+            if page == 'vplay': self.close_video(); return True
+            if page == 'viewer': self.close_image(); return True
+        if page == 'viewer':
+            if k in ('Left', 'Page_Up'): self.step_image(-1); return True
+            if k in ('Right', 'Page_Down'): self.step_image(1); return True
+            if k in ('plus', 'equal'): self.zoom_by(1.4); return True
+            if k == 'minus': self.zoom_by(0.7); return True
+        elif page == 'vplay':
+            if k == 'Left': self.seek_rel(-10); return True
+            if k == 'Right': self.seek_rel(10); return True
+            if k == 'f': self.toggle_fs(); return True
+        elif page == 'music':
+            if k == 'Right' and (e.state & Gdk.ModifierType.CONTROL_MASK): self.next(); return True
+            if k == 'Left' and (e.state & Gdk.ModifierType.CONTROL_MASK): self.prev(); return True
+        return False
+
+    # ------------- library
+    def rescan(self):
+        self.warn_msg('')
+        def work():
+            res = {}
+            for kind in ('audio', 'video', 'image'):
+                res[kind] = media.scan(kind, media.roots(kind) + [d for d in self.extra if os.path.isdir(d)])
+            GLib.idle_add(self.scanned, res)
+        threading.Thread(target=work, daemon=True).start()
+
+    def scanned(self, res):
+        self.tracks, self.vids, self.imgs = res['audio'], res['video'], res['image']
+        self.mstore.clear(); need = []
+        for p, s, m in self.tracks:
+            e = self.tags.cached(p, s, m)
+            if e is None: need.append((p, s, m))
+            self.mstore.append([(e or {}).get('t') or os.path.splitext(os.path.basename(p))[0], (e or {}).get('a', ''), media.fmt_time(e['d']) if e and e.get('d') else '', p])
+        self.mcount.set_text('> %d треков' % len(self.tracks) if self.tracks else '> нет музыки: положите файлы в ~/Music или вставьте накопитель')
+        self._shown_video = self._shown_image = None; self.refilter()
+        if need: threading.Thread(target=self.read_tags, args=(need,), daemon=True).start()
+        return False
+
+    def read_tags(self, need):
+        for i in range(0, len(need), 25):
+            chunk = [(p, self.tags.read(p, s, m)) for p, s, m in need[i:i + 25]]; GLib.idle_add(self.apply_tags, chunk); time.sleep(0.02)
+        self.tags.save()
+
+    def apply_tags(self, chunk):
+        d = dict(chunk)
+        for row in self.mstore:
+            e = d.get(row[3])
+            if e: row[0] = e['t']; row[1] = e['a']; row[2] = media.fmt_time(e['d']) if e['d'] else ''
+        return False
+
+    def fill_grid(self, kind, items):
+        g = self.grid_v if kind == 'video' else self.grid_i; st = g[1]; st.clear()
+        blank = self.blank(kind)
+        for p, s, m in items: st.append([blank, os.path.basename(p), p])
+        g[3].set_text(('> %d %s' % (len(items), 'видео' if kind == 'video' else 'фото')) if items else '> пусто: положите файлы в ~/%s или вставьте накопитель' % ('Videos' if kind == 'video' else 'Pictures'))
+
+    def blank(self, kind):
+        k = (kind, 160)
+        if not hasattr(self, '_blank'): self._blank = {}
+        if k not in self._blank:
+            sf = cairo.ImageSurface(cairo.FORMAT_ARGB32, 160, 160); cr = cairo.Context(sf); cr.set_source_rgb(0.1, 0.1, 0.1); cr.paint(); cr.set_source_rgba(1, 1, 1, 0.3); cr.set_line_width(1); cr.rectangle(0.5, 0.5, 159, 159); cr.stroke()
+            self._blank[k] = Gdk.pixbuf_get_from_surface(sf, 0, 0, 160, 160)
+        return self._blank[k]
+
+    def vis_music(self, model, it, data=None):
+        q = self.search.get_text().strip().lower() if self.win else ''
+        if not q: return True
+        r = model[it]; hay = ('%s %s %s' % (r[0], r[1], os.path.basename(r[3]))).lower()
+        return all(part in hay for part in q.split())
+
+    def refilter(self):
+        q = self.search.get_text().strip().lower()
+        self.mfilter.refilter()
+        for kind in ('video', 'image'):
+            items = self.vids if kind == 'video' else self.imgs
+            sel = [t for t in items if all(part in os.path.basename(t[0]).lower() for part in q.split())] if q else items
+            if getattr(self, '_shown_' + kind, None) != (q, len(items)):
+                setattr(self, '_shown_' + kind, (q, len(items))); self.fill_grid(kind, sel)
+
+    # ------------- thumbnails (lazy: only what is on screen)
+    def load_visible(self, kind):
+        g = self.grid_v if kind == 'video' else self.grid_i; v, st = g[2], g[1]
+        if not v.get_realized() or getattr(self, 'cur_tab', None) != kind: return False
+        r = v.get_visible_range()
+        if not r: return False
+        a, b = r[0].get_indices()[0], r[1].get_indices()[0]
+        with self.thumb_lock:
+            for i in range(max(0, a - 6), min(len(st), b + 14)):
+                row = st[i]
+                if row[0] is self.blank(kind) and row[2] not in [t[1] for t in self.thumb_q]: self.thumb_q.append((kind, row[2]))
+            if not self.thumb_busy and self.thumb_q: self.thumb_busy = True; threading.Thread(target=self.thumb_worker, daemon=True).start()
+        return False
+
+    def thumb_worker(self):
+        while True:
+            with self.thumb_lock:
+                if not self.thumb_q: self.thumb_busy = False; return
+                kind, path = self.thumb_q.pop(0)
+            out = media.thumb(path, 160)
+            if out: GLib.idle_add(self.set_thumb, kind, path, out)
+
+    def set_thumb(self, kind, path, out):
+        st = (self.grid_v if kind == 'video' else self.grid_i)[1]
+        try: pb = GdkPixbuf.Pixbuf.new_from_file(out)
+        except Exception: return False
+        for row in st:
+            if row[2] == path: row[0] = pb; break
+        return False
+
+    def on_grid(self, kind, path):
+        st = (self.grid_v if kind == 'video' else self.grid_i)[1]; p = st[path][2]
+        if kind == 'video': self.open_video(p)
+        else: self.open_image(p, [r[2] for r in st])
+
+    # ------------- mpv
+    def kill_mpv(self):
+        if self.mp: self.mp.close()
+        self.mp = None; self.mp_kind = None; self.st = {}
+
+    def mpv_for(self, kind):
+        if self.mp and self.mp.alive and self.mp_kind == kind: return self.mp
+        self.kill_mpv()
+        if not media.has_sound_card() and not os.environ.get('REMBLY_MPV_AO'): self.warn_msg('нет звуковой карты (aplay -l пуст): видео пойдёт без звука')
+        wid = None; conf = None
+        if kind == 'video':
+            if GdkX11 is None or self.vdraw.get_window() is None: return None
+            wid = self.vdraw.get_window().get_xid()
+            if not self.input_conf:
+                self.input_conf = os.path.join(os.environ.get('XDG_RUNTIME_DIR') or '/tmp', 'rembly-player-input-%d.conf' % os.getpid())
+                with open(self.input_conf, 'w') as f: f.write('MBTN_LEFT script-message rb-tap\nMBTN_LEFT_DBL script-message rb-dbl\nWHEEL_UP add volume 5\nWHEEL_DOWN add volume -5\n')
+            conf = self.input_conf
+        m = media.MPV(video=(kind == 'video'), wid=wid, input_conf=conf, on_event=self.on_mpv)
+        if not m.alive: self.warn_msg(m.err or 'mpv не запустился: проверьте, что пакет mpv установлен'); return None
+        m.observe('time-pos', 'duration', 'pause', 'eof-reached', 'volume'); m.set('volume', self.volume); self.mp = m; self.mp_kind = kind; return m
+
+    def on_mpv(self, msg):
+        ev = msg.get('event')
+        if ev == 'property-change': self.st[msg.get('name')] = msg.get('data')
+        elif ev == 'file-loaded': GLib.idle_add(self.loaded)
+        elif ev == 'client-message': GLib.idle_add(self.on_client_msg, msg.get('args') or [])
+        elif ev == 'rembly-dead': GLib.idle_add(self.mpv_died)
+        elif ev == 'end-file' and msg.get('reason') == 'error': GLib.idle_add(self.warn_msg, 'не удалось воспроизвести файл (формат не поддерживается или файл повреждён)')
+
+    def mpv_died(self):
+        if self.mp is not None and not self.mp.alive: self.mp = None; self.mp_kind = None; self.st = {}; self.refresh_play()
+        return False
+
+    def loaded(self):
+        if self.pending_seek: self.seek_abs(self.pending_seek); self.pending_seek = None
+        if self.mp_kind == 'video': self.mp.set('speed', 1.0); self.v_speed.set_text('1×')
+        GLib.timeout_add(600, self.hud); return False
+
+    def hud(self):
+        if not self.mp or not self.mp.alive: return False
+        if self.mp_kind == 'audio':
+            codec = self.mp.get('audio-codec-name') or ''; ap = self.mp.get('audio-params') or {}; br = self.mp.get('audio-bitrate')
+            bits = [str(codec)] if codec else []
+            if ap.get('samplerate'): bits.append('%d Hz' % ap['samplerate'])
+            if ap.get('channel-count'): bits.append('%d ch' % ap['channel-count'])
+            if br: bits.append('%d kbps' % int(br / 1000))
+            self.m_hud.set_text('> ' + ' | '.join(bits) if bits else '> playing')
+        return False
+
+    # ------------- transport (shared)
+    def status(self):
+        if not self.mp or not self.mp.alive or not (self.now or self.mp_kind == 'video'): return 'Stopped'
+        return 'Paused' if self.st.get('pause') else 'Playing'
+
+    def toggle(self):
+        if self.mp and self.mp.alive and (self.now or self.mp_kind == 'video'): self.pause(not self.st.get('pause'))
+        elif self.stack.get_visible_child_name() == 'music' and self.mfilter.iter_n_children(None):
+            sel = self.mview.get_selection().get_selected()[1]
+            if sel is not None: self.play_from_view(self.mfilter.get_path(sel).get_indices()[0])
+            else: self.play_from_view(0)
+
+    def pause(self, on):
+        if self.mp and self.mp.alive: self.mp.set('pause', bool(on)); self.st['pause'] = bool(on); self.refresh_play(); self.mpris and self.mpris.changed()
+
+    def stop(self):
+        self.save_pos(force=True)
+        if self.mp_kind == 'audio': self.kill_mpv(); self.now = None; self.reset_now(); self.mpris and self.mpris.changed()
+
+    def seek_abs(self, sec):
+        if self.mp and self.mp.alive: self.mp.cmd('seek', max(0, sec), 'absolute')
+
+    def seek_rel(self, d):
+        if self.mp and self.mp.alive: self.mp.cmd('seek', d, 'relative')
+
+    def set_volume(self, v):
+        self.volume = max(0, min(130, int(v)))
+        if self.mp and self.mp.alive: self.mp.set('volume', self.volume)
+        if abs(self.vol.get_value() - self.volume) > 0.5: self.vol.set_value(self.volume)
+
+    def swap_glyph(self, b, size):
+        for ch in b.get_children(): b.remove(ch)
+        b.glyph = PlayGlyph(size); b.add(b.glyph); b.show_all()
+
+    def refresh_play(self):
+        playing = self.status() == 'Playing'
+        for b in (self.b_play, self.v_play): b.glyph.playing = playing; b.glyph.queue_draw()
+
+    def tick(self):
+        """4x a second: move the playhead (only while the window is visible and something plays)"""
+        try:
+            if not self.win.get_visible() or not self.mp or not self.mp.alive: return True
+            stt = self.status()
+            if stt != getattr(self, 'last_status', None): self.last_status = stt; self.refresh_play(); self.mpris and self.mpris.changed()
+            pos = self.st.get('time-pos') or 0; dur = self.st.get('duration') or 0; page = self.stack.get_visible_child_name()
+            if page == 'music' and self.now:
+                self.wave.set_state(pos / dur if dur else 0); self.t_pos.set_text(media.fmt_time(pos)); self.t_len.set_text(media.fmt_time(dur))
+                if self.st.get('eof-reached'): self.on_track_end()
+            elif page == 'vplay':
+                if not self.seeking and dur: self.v_seek.set_value(pos / dur * 1000)
+                self.v_pos.set_text(media.fmt_time(pos)); self.v_len.set_text(media.fmt_time(dur))
+                if self.st.get('eof-reached'): self.on_video_end()
+                self.check_drops(); self.save_pos()
+        except Exception:
+            pass
+        return True
+
+    # ------------- music
+    def play_from_view(self, i):
+        self.queue = [self.mfilter[j][3] for j in range(len(self.mfilter))]; self.build_order(i); self.play_at(self.order.index(i) if i in self.order else 0)
+
+    def build_order(self, first):
+        self.order = list(range(len(self.queue)))
+        if self.shuffle:
+            rest = [k for k in self.order if k != first]; random.shuffle(rest); self.order = [first] + rest
+
+    def play_list(self, paths, i):
+        self.queue = list(paths); self.build_order(i); self.play_at(self.order.index(i) if i in self.order else 0)
+
+    def on_track(self, view, path, col):
+        self.play_from_view(path.get_indices()[0])
+
+    def play_at(self, k):
+        if not self.queue: return
+        self.qpos = k % len(self.order); path = self.queue[self.order[self.qpos]]
+        if not os.path.exists(path): self.warn_msg('файла больше нет (накопитель извлечён?): ' + os.path.basename(path)); return
+        m = self.mpv_for('audio')
+        if m is None: return
+        m.set('pause', False); self.st['pause'] = False; self.st['eof-reached'] = False; m.cmd('loadfile', path)
+        try: st = os.stat(path); e = self.tags.read(path, st.st_size, st.st_mtime)
+        except OSError: e = {'t': os.path.basename(path), 'a': '', 'b': '', 'd': 0}
+        self.now = dict(e, path=path); self.m_title.set_text(e['t']); self.m_artist.set_text(' — '.join(x for x in (e['a'], e['b']) if x)); self.m_hud.set_text('> loading')
+        self.cover.set_pix(None); self.wave.set_state(0, None, keep=False); self.t_pos.set_text('0:00'); self.t_len.set_text(media.fmt_time(e['d'])); self.refresh_play()
+        self.select_playing(path); self.wave_job += 1; threading.Thread(target=self.side_work, args=(path, self.wave_job), daemon=True).start()
+        self.mpris and self.mpris.changed()
+
+    def side_work(self, path, job):
+        cb = media.cover_bytes(path); pb = pix_from_bytes(cb, 294) if cb else None
+        if job == self.wave_job: GLib.idle_add(self.cover.set_pix, pb)
+        time.sleep(0.5)                                                         # let the track start before spending CPU on its waveform
+        if job != self.wave_job: return
+        w = media.waveform(path)
+        if job == self.wave_job and w: GLib.idle_add(self.wave.set_state, 0, w)
+
+    def select_playing(self, path):
+        for i, r in enumerate(self.mfilter):
+            if r[3] == path: self.mview.get_selection().select_path(Gtk.TreePath(i)); self.mview.scroll_to_cell(Gtk.TreePath(i), None, True, 0.4, 0); break
+
+    def reset_now(self):
+        self.m_title.set_text('Ничего не играет'); self.m_artist.set_text(''); self.m_hud.set_text('> idle'); self.cover.set_pix(None); self.wave.set_state(0, None, keep=False); self.refresh_play()
+
+    def on_track_end(self):
+        self.st['eof-reached'] = False
+        if self.repeat == 'one': self.play_at(self.qpos)
+        elif self.qpos + 1 < len(self.order) or self.repeat == 'all': self.play_at(self.qpos + 1)
+        else: self.stop()
+
+    def next(self):
+        if self.mp_kind == 'audio' and self.queue: self.play_at(self.qpos + 1)
+
+    def prev(self):
+        if self.mp_kind == 'audio' and self.queue:
+            if (self.st.get('time-pos') or 0) > 4: self.seek_abs(0)
+            else: self.play_at(self.qpos - 1)
+
+    def toggle_shuffle(self):
+        self.shuffle = not self.shuffle
+        if self.queue and self.now:
+            cur = self.order[self.qpos]; self.build_order(cur); self.qpos = self.order.index(cur)
+        self.sync_toggles()
+
+    def cycle_repeat(self):
+        self.repeat = {'off': 'all', 'all': 'one', 'one': 'off'}[self.repeat]; self.sync_toggles()
+
+    def sync_toggles(self):
+        for b, on in ((self.b_shuf, self.shuffle), (self.b_rep, self.repeat != 'off')):
+            sc = b.get_style_context(); sc.add_class('on') if on else sc.remove_class('on')
+        self.b_rep.set_tooltip_text({'off': 'Повтор: выкл', 'all': 'Повтор: всё', 'one': 'Повтор: один трек'}[self.repeat])
+
+    # ------------- video
+    def open_video(self, path):
+        self.stop_slides(); self.kill_mpv(); self.now = None; self.reset_now(); self.cur_video = path
+        self.stack.set_visible_child_name('vplay'); self.set_chrome(False); self.vbar.show(); self.v_title.set_text(os.path.basename(path)); self.v_seek.set_value(0); self.refresh_play()
+        GLib.idle_add(self._start_video, path)
+
+    def _start_video(self, path):
+        m = self.mpv_for('video')
+        if m is None: self.close_video(); return False
+        m.set('pause', False); self.st['pause'] = False; self.st['eof-reached'] = False
+        pos = self.cfg.get('pos', {}).get(path); self.pending_seek = pos if pos and pos > 10 else None
+        self.drop_base = None; self.dropped_warned = False; m.cmd('loadfile', path); self.refresh_play(); self.ctl_show(); return False
+
+    def close_video(self):
+        self.save_pos(force=True)
+        if self.mp_kind == 'video': self.kill_mpv()
+        self.stack.set_visible_child_name('video'); self.set_chrome(True); self.win.unfullscreen(); self.fs = False; self.refresh_play(); self.warn_msg('')
+
+    def on_video_end(self):
+        self.st['eof-reached'] = False; p = self.cfg.setdefault('pos', {}); p.pop(getattr(self, 'cur_video', ''), None)
+        if self.fs: self.toggle_fs()
+        self.vbar.show()
+
+    def v_seek_done(self, w, e):
+        self.seeking = False; dur = self.st.get('duration') or 0
+        GLib.idle_add(lambda: (self.seek_abs(self.v_seek.get_value() / 1000.0 * dur), False)[1]); return False
+
+    def cycle_speed(self):
+        if not self.mp: return
+        cur = self.st.get('speed') or 1.0; nxt = {1.0: 1.25, 1.25: 1.5, 1.5: 2.0, 2.0: 0.75, 0.75: 1.0}.get(round(cur, 2), 1.0); self.mp.set('speed', nxt); self.st['speed'] = nxt; self.v_speed.set_text('%g×' % nxt)
+
+    def on_client_msg(self, args):
+        if not args: return False
+        if args[0] == 'rb-tap': self.ctl_toggle()
+        elif args[0] == 'rb-dbl' and self.mp:
+            mp = self.mp.get('mouse-pos') or {}; w = self.vdraw.get_allocated_width() or 1; x = (mp.get('x') or 0) / float(w)
+            if x < 0.33: self.seek_rel(-10); self.flash_osd('−10 с')
+            elif x > 0.66: self.seek_rel(10); self.flash_osd('+10 с')
+            else: self.toggle()
+        return False
+
+    def flash_osd(self, text):
+        if self.mp: self.mp.cmd('show-text', text, 700)
+
+    def ctl_toggle(self):
+        if self.vbar.get_visible() and self.fs: self.vbar.hide()
+        else: self.ctl_show()
+
+    def ctl_show(self):
+        self.vbar.show()
+        if self.ctl_hide_id: GLib.source_remove(self.ctl_hide_id); self.ctl_hide_id = 0
+        if self.fs: self.ctl_hide_id = GLib.timeout_add_seconds(4, self.ctl_hide)
+
+    def ctl_hide(self):
+        self.ctl_hide_id = 0
+        if self.fs and self.status() == 'Playing': self.vbar.hide()
+        return False
+
+    def toggle_fs(self):
+        self.fs = not self.fs; page = self.stack.get_visible_child_name()
+        if self.fs: self.win.fullscreen(); self.set_chrome(False)
+        else: self.win.unfullscreen(); self.set_chrome(page not in ('vplay', 'viewer'))
+        if page == 'vplay': self.ctl_show()
+        elif page == 'viewer': self.ibar.set_visible(not self.fs)
+
+    def check_drops(self):
+        """frames the SoC could not decode in time: tell the user once instead of letting them think the player is broken"""
+        if not self.mp or self.dropped_warned: return
+        d = (self.mp.get('decoder-frame-drop-count') or 0) + (self.mp.get('frame-drop-count') or 0)
+        if self.drop_base is None: self.drop_base = (d, time.time()); return
+        if time.time() - self.drop_base[1] > 12 and d - self.drop_base[0] > 60:
+            self.dropped_warned = True; w = self.mp.get('width') or 0; h = self.mp.get('height') or 0
+            self.warn_msg('планшет не успевает: пропущено %d кадров (видео %dx%d). Для плавности лучше 720p или ниже' % (d - self.drop_base[0], w, h))
+
+    def save_pos(self, force=False):
+        if self.mp_kind != 'video' or not getattr(self, 'cur_video', None): return
+        if not force and time.time() - self.pos_saved < 5: return
+        self.pos_saved = time.time(); pos = self.st.get('time-pos') or 0; dur = self.st.get('duration') or 0; p = self.cfg.setdefault('pos', {})
+        if dur > 120 and 10 < pos < dur - 15: p[self.cur_video] = int(pos)
+        else: p.pop(self.cur_video, None)
+        if len(p) > 300: p.pop(next(iter(p)))
+
+    def warn_msg(self, text):
+        self.warn.set_text(text); self.warn.set_visible(bool(text))
+        if text: GLib.timeout_add_seconds(14, lambda: (self.warn.set_visible(False), False)[1])
+
+    # ------------- photos
+    def open_image(self, path, lst):
+        self.kill_mpv(); self.now = None; self.reset_now()
+        self.img_list = [p for p in lst if media.kind_of(p) == 'image'] or [path]; self.img_idx = self.img_list.index(path) if path in self.img_list else 0
+        self.stack.set_visible_child_name('viewer'); self.set_chrome(False); self.ibar.show(); self.load_image()
+
+    def close_image(self):
+        self.stop_slides(); self.stack.set_visible_child_name('image'); self.set_chrome(True); self.win.unfullscreen(); self.fs = False; self.pix = self.pix_fit = None
+
+    def load_image(self):
+        path = self.img_list[self.img_idx]; self.img_path = path; self.loading = True; self.i_name.set_text('%d/%d  %s' % (self.img_idx + 1, len(self.img_list), os.path.basename(path))); self.canvas.queue_draw()
+        sw, sh = ui.screen_size(); lim = (min(2600, sw * 2), min(2000, sh * 2))
+
+        def work():
+            try:
+                pb = GdkPixbuf.Pixbuf.new_from_file_at_scale(path, lim[0], lim[1], True); pb = pb.apply_embedded_orientation() or pb
+            except Exception:
+                pb = None
+            GLib.idle_add(self.image_ready, path, pb)
+        threading.Thread(target=work, daemon=True).start()
+
+    def image_ready(self, path, pb):
+        if path != self.img_path: return False
+        self.loading = False; self.pix = pb; self.zoom = 1.0; self.off = [0.0, 0.0]; self.fit_cache(); self.canvas.queue_draw()
+        if pb is None: self.warn_msg('не удалось открыть ' + os.path.basename(path))
+        return False
+
+    def fit_scale(self):
+        if self.pix is None: return 1.0
+        W, H = max(1, self.canvas.get_allocated_width()), max(1, self.canvas.get_allocated_height())
+        return min(W / float(self.pix.get_width()), H / float(self.pix.get_height()))
+
+    def fit_cache(self):
+        """the picture pre-scaled to the window once: while it is not zoomed, redrawing is a plain blit (smooth even on this CPU)"""
+        self.pix_fit = None
+        if self.pix is None: return
+        s = self.fit_scale(); self.pix_fit = self.pix.scale_simple(max(1, int(self.pix.get_width() * s)), max(1, int(self.pix.get_height() * s)), GdkPixbuf.InterpType.BILINEAR); self.fit_for = (self.canvas.get_allocated_width(), self.canvas.get_allocated_height())
+
+    def draw_image(self, w, cr):
+        W, H = w.get_allocated_width(), w.get_allocated_height(); cr.set_source_rgb(0, 0, 0); cr.paint()
+        if self.pix is None:
+            cr.set_source_rgba(1, 1, 1, 0.7); cr.select_font_face('Fira Code'); cr.set_font_size(15); cr.move_to(20, 30); cr.show_text('> загрузка…' if self.loading else '> нет изображения'); return False
+        if getattr(self, 'fit_for', None) != (W, H): self.fit_cache()
+        if self.zoom <= 1.001 and self.pix_fit is not None:
+            Gdk.cairo_set_source_pixbuf(cr, self.pix_fit, (W - self.pix_fit.get_width()) / 2.0, (H - self.pix_fit.get_height()) / 2.0); cr.paint(); return False
+        s = self.fit_scale() * self.zoom; pw, ph = self.pix.get_width() * s, self.pix.get_height() * s; self.clamp(W, H, pw, ph)
+        cr.translate((W - pw) / 2.0 + self.off[0], (H - ph) / 2.0 + self.off[1]); cr.scale(s, s)
+        Gdk.cairo_set_source_pixbuf(cr, self.pix, 0, 0); cr.get_source().set_filter(cairo.FILTER_BILINEAR); cr.paint(); return False
+
+    def clamp(self, W, H, pw, ph):
+        mx, my = max(0.0, (pw - W) / 2.0), max(0.0, (ph - H) / 2.0); self.off[0] = max(-mx, min(mx, self.off[0])); self.off[1] = max(-my, min(my, self.off[1]))
+
+    def zoom_by(self, f, cx=None, cy=None):
+        z = max(1.0, min(8.0, self.zoom * f))
+        if z == self.zoom: return
+        if z <= 1.001: self.off = [0.0, 0.0]
+        elif cx is not None:                                                      # keep the point under the finger in place
+            W, H = self.canvas.get_allocated_width(), self.canvas.get_allocated_height(); k = z / self.zoom
+            self.off[0] = (cx - W / 2.0) - (cx - W / 2.0 - self.off[0]) * k; self.off[1] = (cy - H / 2.0) - (cy - H / 2.0 - self.off[1]) * k
+        else: self.off = [self.off[0] * z / self.zoom, self.off[1] * z / self.zoom]
+        self.zoom = z; self.canvas.queue_draw()
+
+    def zoom_fit(self): self.zoom = 1.0; self.off = [0.0, 0.0]; self.canvas.queue_draw()
+
+    def rotate(self):
+        if self.pix is None: return
+        self.pix = self.pix.rotate_simple(GdkPixbuf.PixbufRotation.CLOCKWISE); self.zoom = 1.0; self.off = [0.0, 0.0]; self.fit_cache(); self.canvas.queue_draw()
+
+    def step_image(self, d):
+        if not self.img_list: return
+        self.img_idx = (self.img_idx + d) % len(self.img_list); self.load_image()
+
+    def zoom_begin(self, g, seq):
+        self.base_zoom = self.zoom; self.base_off = list(self.off); self.pinching = True
+
+    def zoom_changed(self, g, scale):
+        self.zoom = max(1.0, min(8.0, self.base_zoom * scale))
+        if self.zoom <= 1.001: self.off = [0.0, 0.0]
+        self.canvas.queue_draw()
+
+    def drag_begin(self, g, x, y): self.drag_off = list(self.off); self.drag_t = time.time(); self.pinching = False
+
+    def drag_update(self, g, dx, dy):
+        if self.zoom > 1.001 and not getattr(self, 'pinching', False):
+            self.off = [self.drag_off[0] + dx, self.drag_off[1] + dy]; self.canvas.queue_draw()
+
+    def drag_end(self, g, dx, dy):
+        if self.zoom <= 1.001 and not getattr(self, 'pinching', False) and abs(dx) > 90 and abs(dx) > 1.6 * abs(dy) and time.time() - self.drag_t < 0.8:   # a swipe
+            self.step_image(-1 if dx > 0 else 1)
+
+    def tapped(self, g, n, x, y):
+        if n == 2:
+            self.last_dbl = time.time()
+            if self.zoom > 1.001: self.zoom_fit()
+            else: self.zoom_by(2.5, x, y)
+        elif n == 1: GLib.timeout_add(280, self.maybe_toggle_bar)                          # a single tap shows/hides the buttons in full screen, unless it was the first half of a double tap
+
+    def maybe_toggle_bar(self):
+        if self.fs and time.time() - getattr(self, 'last_dbl', 0) > 0.5: self.ibar.set_visible(not self.ibar.get_visible())
+        return False
+
+    def on_wheel(self, w, e):
+        if e.direction == Gdk.ScrollDirection.UP: self.zoom_by(1.2, e.x, e.y)
+        elif e.direction == Gdk.ScrollDirection.DOWN: self.zoom_by(1 / 1.2, e.x, e.y)
+        return True
+
+    def toggle_slides(self):
+        if self.slide_id: self.stop_slides(); return
+        self.slide_id = GLib.timeout_add_seconds(4, lambda: (self.step_image(1), True)[1]); self.warn_msg('слайдшоу: смена кадра каждые 4 с')
+
+    def stop_slides(self):
+        if self.slide_id: GLib.source_remove(self.slide_id); self.slide_id = 0
+
+
+def main():
+    argv = sys.argv[:]; tab = None
+    if '--tab' in argv:                                                          # rembly-player --tab music|video|image  (the desktop tiles use this)
+        i = argv.index('--tab'); tab = argv[i + 1] if i + 1 < len(argv) else None; del argv[i:i + 2]
+    app = Player(); app.register(None)
+    if tab in ('music', 'video', 'image'):
+        if app.get_is_remote(): app.activate_action('tab', GLib.Variant('s', tab)); return 0       # already running: just switch its page
+        app.cfg['tab'] = tab
+    return app.run(argv)
+
+
+if __name__ == '__main__':
+    sys.exit(main())

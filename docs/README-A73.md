@@ -26,7 +26,7 @@ dock, 4 workspaces, tray with Wi-Fi/BT/SIM/battery/clock, power menu, full app l
 Replace the wallpaper by putting `wallpaper.png`/`.jpg` into `~/.config/rembly/` (the glass blur follows it);
 city for weather in `~/.config/rembly/city`.
 Landscape 1280x800 by default (panel is portrait). `rembly-rotate cw|ccw|ud|none` rotates screen + touch.
-Apps: NetSurf, Thunar, terminal, Geany (IDE), Mousepad, calculator, mpv, audacious, image/PDF viewers,
+Apps: NetSurf, Thunar, terminal, Geany (IDE), Mousepad, calculator, Rembly Player (music, video, photos; mpv inside), Rembly Code (light editor), PDF viewer,
 task manager; dev: Python 3.8, GCC 9, G++, CMake, Make, GDB, Git, Node.js, SSH.
 
 ## Full user guide

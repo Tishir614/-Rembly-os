@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Generates the 'Rembly' xfwm4 window-frame theme (colourful purple/pink frame instead of the plain grey one).
 Frame geometry matches Default-xhdpi (title 58 px, borders 12 px), so every window of the desktop gets the same look.
-usage: tools/gen_wmtheme.py [OUTDIR]   (default rootfs/overlay/usr/share/themes/Rembly/xfwm4)"""
+usage: tools/gen_wmtheme.py [OUTDIR]            (default rootfs/overlay/usr/share/themes/Rembly/xfwm4)
+       tools/gen_wmtheme.py --hacker [OUTDIR]   the same frame in phosphor green (default rootfs/overlay/usr/share/themes/Rembly-Hacker/xfwm4)"""
 import os, shutil, sys
 from PIL import Image, ImageDraw, ImageFilter
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, 'rootfs/overlay/usr/share/themes/Rembly/xfwm4')
+HACKER = '--hacker' in sys.argv
+_args = [a for a in sys.argv[1:] if not a.startswith('--')]
+OUT = _args[0] if _args else os.path.join(ROOT, 'rootfs/overlay/usr/share/themes', 'Rembly-Hacker' if HACKER else 'Rembly', 'xfwm4')
 os.makedirs(OUT, exist_ok=True)
 TH, BW, W, H, R = 34, 3, 400, 300, 6
 S = 4                                                       # supersampling for smooth corners
@@ -96,9 +99,9 @@ for kind in ('close', 'maximize', 'hide', 'menu', 'shade', 'stick'):
         for st in ('active', 'inactive', 'prelight', 'pressed'):
             button(kind, st, tg).save(os.path.join(OUT, '%s%s-%s.png' % (kind, '-toggled' if tg else '', st)))
 
-open(os.path.join(OUT, 'themerc'), 'w').write('''active_text_color=#ffffff
+open(os.path.join(OUT, 'themerc'), 'w').write('''active_text_color=%s
 active_text_shadow_color=#000000
-inactive_text_color=#9a9a9a
+inactive_text_color=%s
 inactive_text_shadow_color=#000000
 button_offset=4
 button_spacing=0
@@ -116,5 +119,11 @@ title_shadow_active=frame
 title_shadow_inactive=false
 title_vertical_offset_active=0
 title_vertical_offset_inactive=0
-''')
+''' % (('#39ff88', '#2f7a4d') if HACKER else ('#ffffff', '#9a9a9a')))
+
+if HACKER:                                      # grey frame -> phosphor green: luminance becomes the green channel (white -> #38ff87), alpha is kept
+    for n in os.listdir(OUT):
+        if not n.endswith('.png'): continue
+        p = os.path.join(OUT, n); im = Image.open(p).convert('RGBA'); a = im.getchannel('A'); l = im.convert('L')
+        Image.merge('RGBA', (l.point(lambda v: int(v * 0.22)), l, l.point(lambda v: int(v * 0.53)), a)).save(p)
 print('wrote', len(os.listdir(OUT)), 'files to', OUT)

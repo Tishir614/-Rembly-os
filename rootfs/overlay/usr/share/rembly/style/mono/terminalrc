@@ -1,0 +1,20 @@
+[Configuration]
+FontName=Fira Code 11
+MiscAlwaysShowTabs=FALSE
+MiscBell=FALSE
+MiscBordersDefault=TRUE
+MiscCursorBlinks=TRUE
+MiscCursorShape=TERMINAL_CURSOR_SHAPE_BLOCK
+MiscDefaultGeometry=100x30
+MiscMenubarDefault=FALSE
+MiscToolbarDefault=FALSE
+ScrollingBar=TERMINAL_SCROLLBAR_NONE
+ScrollingLines=5000
+ColorForeground=#eaeaea
+ColorBackground=#0a0a0a
+ColorCursor=#ffffff
+ColorSelection=#0a0a0a
+ColorSelectionBackground=#d8d8d8
+ColorBoldUseDefault=FALSE
+ColorPalette=#1a1a1a;#bdbdbd;#d0d0d0;#e0e0e0;#a8a8a8;#c8c8c8;#d8d8d8;#e8e8e8;#555555;#cfcfcf;#dedede;#ececec;#bcbcbc;#d6d6d6;#e4e4e4;#ffffff
+TabActivityColor=#ffffff

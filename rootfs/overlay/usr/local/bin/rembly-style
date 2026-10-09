@@ -1,0 +1,34 @@
+#!/bin/sh
+# rembly-style mono|hacker|status   - switch the look of the whole system between the black-and-white fox (default) and the green "hacker" terminal style.
+# What changes: Rembly apps (colours, fonts, digital rain on the lock screen, Matrix app), window frames (xfwm4 theme), GTK3 apps (gtk.css), terminal colours,
+# notifications and the shell prompt. Nothing is installed or downloaded; every file written lives in ~/.config.   Apps that are already open change when restarted.
+S=${REMBLY_SHARE:-/usr/share/rembly}/style
+C=${REMBLY_CONFIG:-$HOME/.config}
+cur() { cat "$C/rembly/style" 2>/dev/null || echo mono; }
+case "$1" in
+  mono|hacker) st=$1 ;;
+  status|"") echo "$(cur)"; exit 0 ;;
+  *) echo "usage: rembly-style mono|hacker|status" >&2; exit 2 ;;
+esac
+mkdir -p "$C/rembly" "$C/gtk-3.0" "$C/dunst" "$C/xfce4/terminal"
+echo "$st" > "$C/rembly/style"
+[ -f "$S/$st/gtk.css" ] && cp "$S/$st/gtk.css" "$C/gtk-3.0/gtk.css"
+# terminal: always start from the black-and-white file, then (hacker) swap the colour keys
+if [ -f "$S/mono/terminalrc" ]; then
+  cp "$S/mono/terminalrc" "$C/xfce4/terminal/terminalrc"
+  if [ "$st" = hacker ] && [ -f "$S/hacker/terminal-colors" ]; then
+    while IFS='=' read -r k v; do [ -n "$k" ] && sed -i "s|^$k=.*|$k=$v|" "$C/xfce4/terminal/terminalrc"; done < "$S/hacker/terminal-colors"
+  fi
+fi
+if [ -f "$S/mono/dunstrc" ]; then
+  cp "$S/mono/dunstrc" "$C/dunst/dunstrc"
+  [ "$st" = hacker ] && sed -i -f "$S/hacker/dunstrc.sed" "$C/dunst/dunstrc"
+fi
+if [ -z "$REMBLY_NO_APPLY" ]; then                        # live parts: window frames, notification daemon, desktop shell
+  th=Rembly; [ "$st" = hacker ] && th=Rembly-Hacker
+  xfconf-query -c xfwm4 -p /general/theme -s "$th" 2>/dev/null || xfconf-query -c xfwm4 -p /general/theme -n -t string -s "$th" 2>/dev/null
+  pkill -x dunst 2>/dev/null; (dunst >/dev/null 2>&1 &)
+  command -v rembly-restart-shell >/dev/null 2>&1 && rembly-restart-shell >/dev/null 2>&1
+  notify-send "Стиль: $st" "Окна, которые уже открыты, сменят вид после перезапуска" 2>/dev/null
+fi
+echo "style: $st"

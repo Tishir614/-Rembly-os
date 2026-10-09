@@ -25,29 +25,32 @@ def xconn():
 
 
 # name, icon names, command
-APPS = [
+APPS = [          # the first 12 fill the Home tiles (4 x 3); the rest are one tap away under "все приложения"
     ('Браузер', ['web-browser', 'netsurf', 'internet-web-browser'], 'netsurf-gtk'),
     ('Терминал', ['utilities-terminal', 'org.xfce.terminal'], 'xfce4-terminal'),
     ('Файлы', ['system-file-manager', 'org.xfce.thunar', 'folder'], 'thunar'),
-    ('Geany', ['geany', 'text-editor'], 'geany'),
-    ('Python', ['python', 'text-x-python', 'applications-python'], 'xfce4-terminal -e python3'),
+    ('Rembly Code', ['applications-development', 'accessories-text-editor', 'text-editor'], 'rembly-code'),
+    ('Музыка', ['audio-x-generic', 'multimedia-audio-player', 'audacious'], 'rembly-player --tab music'),
+    ('Видео', ['video-x-generic', 'multimedia-video-player', 'mpv'], 'rembly-player --tab video'),
+    ('Фото', ['image-x-generic', 'image-viewer', 'gpicview'], 'rembly-player --tab image'),
     ('Блокнот', ['accessories-text-editor', 'mousepad'], 'mousepad'),
     ('Калькулятор', ['accessories-calculator', 'galculator'], 'galculator'),
-    ('Музыка', ['audacious', 'multimedia-audio-player', 'audio-x-generic'], 'audacious'),
-    ('Видео', ['mpv', 'multimedia-video-player', 'video-x-generic'], 'mpv --player-operation-mode=pseudo-gui'),
-    ('Фото', ['gpicview', 'image-viewer', 'image-x-generic'], 'gpicview'),
-    ('PDF', ['atril', 'application-pdf'], 'atril'),
-    ('Сеть', ['network-wireless', 'preferences-system-network'], 'rembly-netui'),
-    ('Диспетчер', ['utilities-system-monitor'], 'xfce4-taskmanager'),
-    ('Таймер', ['preferences-system-time', 'alarm-clock', 'clock'], 'rembly-timer'),
-    ('Сенсор', ['input-touchpad', 'preferences-desktop-peripherals', 'input-tablet'], 'rembly-touchtest'),
+    ('Диспетчер', ['utilities-system-monitor'], 'rembly-taskman'),
     ('Настройки', ['preferences-system', 'xfce4-settings-manager'], 'rembly-settings'),
     ('Магазин', ['softwarecenter', 'system-software-install', 'applications-other'], 'rembly-store'),
+    ('Матрица', ['utilities-terminal', 'terminal'], 'rembly-matrix', 'hacker'),
+    ('Geany', ['geany', 'text-editor'], 'geany'),
+    ('Python', ['python', 'text-x-python', 'applications-python'], 'xfce4-terminal -e python3'),
+    ('PDF', ['atril', 'application-pdf'], 'atril'),
+    ('Сеть', ['network-wireless', 'preferences-system-network'], 'rembly-netui'),
+    ('Таймер', ['preferences-system-time', 'alarm-clock', 'clock'], 'rembly-timer'),
+    ('Сенсор', ['input-touchpad', 'preferences-desktop-peripherals', 'input-tablet'], 'rembly-touchtest'),
 ]
 
 
 def avail_apps():
-    return [a for a in APPS if DEMO or have(a[2])]
+    """(name, icons, command) of what is installed; a 4th field restricts an entry to one style (the Matrix screensaver shows only in the hacker style)"""
+    return [a[:3] for a in APPS if (DEMO or have(a[2])) and (len(a) < 4 or a[3] == STYLE)]
 
 
 class SquareAvatar(Gtk.DrawingArea):
@@ -62,7 +65,7 @@ class SquareAvatar(Gtk.DrawingArea):
     def do_draw(self, cr):
         s = self.size
         if self.pb is not None: Gdk.cairo_set_source_pixbuf(cr, self.pb, 3, 3); cr.paint()
-        cr.set_source_rgba(1, 1, 1, 0.95); cr.set_line_width(2); cr.rectangle(1, 1, s - 2, s - 2); cr.stroke()
+        cr.set_source_rgba(*ACCENT, 0.95); cr.set_line_width(2); cr.rectangle(1, 1, s - 2, s - 2); cr.stroke()
 
 
 class Visualizer(Gtk.DrawingArea):
@@ -94,7 +97,7 @@ class Visualizer(Gtk.DrawingArea):
         w, h = self.get_allocated_width(), self.get_allocated_height(); gap = 6; bw = (w - gap * (self.N - 1)) / self.N
         for i, v in enumerate(self.v):
             bh = max(3, v * (h - 6)); x = i * (bw + gap)
-            cr.set_source_rgba(0.96, 0.96, 0.96, 0.95); cr.rectangle(x, h - bh, bw, bh); cr.fill()
+            cr.set_source_rgba(ACCENT[0] * 0.96, ACCENT[1] * 0.96, ACCENT[2] * 0.96, 0.95); cr.rectangle(x, h - bh, bw, bh); cr.fill()
 
 
 class Home(Win):
@@ -153,6 +156,8 @@ class Home(Win):
         g.pack_start(SquareAvatar(118), False, False, 0)
         col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2); col.set_margin_start(22); col.set_valign(Gtk.Align.CENTER)
         t = Gtk.Label(label='R E M B L Y | O S', xalign=0); t.get_style_context().add_class('ff-title'); col.pack_start(t, False, False, 0)
+        if HACKER:                                                      # prompt with a blinking block cursor (one tiny label update every 0.65 s, only while the desktop is visible)
+            self.fetch_title, self.cursor_on = t, True; t.set_text('root@rembly:~$ neofetch█'); GLib.timeout_add(650, self.blink)
         sep = '-' * 24
         for text, cls in ((sep, 'ff-sep'),):
             l = Gtk.Label(label=text, xalign=0); l.get_style_context().add_class(cls); col.pack_start(l, False, False, 0)
@@ -161,12 +166,16 @@ class Home(Win):
             l = Gtk.Label(label=line, xalign=0); l.get_style_context().add_class('ff-line'); l.set_ellipsize(Pango.EllipsizeMode.END); col.pack_start(l, False, False, 0); self.ff.append(l)
         l = Gtk.Label(label=sep, xalign=0); l.get_style_context().add_class('ff-sep'); col.pack_start(l, False, False, 0)
         sw_ = Gtk.DrawingArea(); sw_.set_size_request(200, 14)
-        cols = [(1, 1, 1), (.86, .86, .86), (.72, .72, .72), (.58, .58, .58), (.45, .45, .45), (.33, .33, .33), (.22, .22, .22), (.12, .12, .12)]
+        cols = [tuple(c * k for c in ACCENT) for k in (1, .86, .72, .58, .45, .33, .22, .12)]
         def draw(wd, cr):
             for i, c in enumerate(cols): cr.set_source_rgb(*c); cr.rectangle(i * 24, 2, 20, 8); cr.fill()
         sw_.connect('draw', draw); col.pack_start(sw_, False, False, 2)
         g.pack_start(col, True, True, 0)
         self.put(g, x, y, w, h)
+
+    def blink(self):
+        if getattr(self, 'viz', None) is not None and self.viz.obscured: return True
+        self.cursor_on = not self.cursor_on; self.fetch_title.set_text('root@rembly:~$ neofetch' + ('█' if self.cursor_on else ' ')); return True
 
     def refresh_fetch(self):
         if getattr(self, 'ff', None):
@@ -445,7 +454,7 @@ class Bar(Win):
             cpu = (1 - (idle - self._cpu[1]) / max(1, tot - self._cpu[0])) if self._cpu else 0; self._cpu = (tot, idle)
             mi = {l.split(':')[0]: int(l.split()[1]) for l in open('/proc/meminfo') if ':' in l}; ram = 1 - mi['MemAvailable'] / mi['MemTotal']
             if DEMO: cpu, ram = .20, .31
-            self.cpu_l.set_text('CPU %d%%' % round(cpu * 100)); self.ram_l.set_text('RAM %d%%' % round(ram * 100))
+            self.cpu_l.set_text(('cpu:%d%%' if HACKER else 'CPU %d%%') % round(cpu * 100)); self.ram_l.set_text(('ram:%d%%' if HACKER else 'RAM %d%%') % round(ram * 100))
         except Exception: pass
         t = time.localtime(); self.tc.set_text('20:44' if DEMO else time.strftime('%H:%M', t))
         return True
@@ -492,7 +501,8 @@ class Bar(Win):
         self.bat.set_text('85%' if DEMO else (('%s%%%s' % (cap, '+' if chg == 'Charging' else '')) if cap else 'AC'))
         self.net_l.set_text('wlan0: Aesthetic' if DEMO else ('wlan0: %s' % ssid if ssid else ('wlan0: нет сети' if wl != 'up' else 'wlan0: ...')))
         self.vol_l.set_text('♪ %s' % (vol or '--%'))
-        self.title.set_text(track if track and track.strip(' -') else 'Rembly OS')
+        t = track if track and track.strip(' -') else 'Rembly OS'
+        self.title.set_text(('$ ' + t.lower().replace(' ', '_') if not (track and track.strip(' -')) else '$ play "%s"' % t) if HACKER else t)
 
     def cur_ws(self):
         x = xconn(); cur = str(x.current_desktop()) if x else out("wmctrl -d | awk '$2==\"*\"{print $1}'", 1)

@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""rembly-install-vscode - optional: the official Microsoft VS Code for 32-bit ARM, installed ON DEMAND, with low-end settings.
+
+Why it is not part of the image: VS Code is an Electron app (a whole Chromium). On a 2 GB, GPU-less Cortex-A53 tablet with kernel 3.18 it is heavy
+and NOT verified to start or to be smooth here. Rembly Code (the built-in editor) is the recommended tool; this is for people who want the real thing anyway.
+It downloads the official .deb from update.code.visualstudio.com, checks the SHA-256 given by Microsoft's API, installs it with apt, and writes
+a launcher `code-rembly` with the flags that matter without a GPU (no sandbox because the kernel has no user namespaces, no GPU, no /dev/shm use) and
+settings that switch off the expensive features (minimap, bracket colours, smooth scrolling, telemetry, auto-update, file watching of big folders).
+
+usage: rembly-install-vscode            check the tablet, download, verify, install (asks before the big download)
+       rembly-install-vscode --check    only check whether this tablet can try it (RAM, disk, architecture, network)
+       rembly-install-vscode --status   installed version / launcher
+       rembly-install-vscode --remove   uninstall (settings in ~/.config/Code are kept)
+       rembly-install-vscode --yes      do not ask"""
+import hashlib, json, os, platform, shutil, subprocess, sys, urllib.request
+
+API = os.environ.get('REMBLY_VSCODE_API', 'https://update.code.visualstudio.com/api/update/linux-deb-armhf/stable/latest')
+WRAP = os.environ.get('REMBLY_VSCODE_WRAPPER', '/usr/local/bin/code-rembly')
+DESK = os.environ.get('REMBLY_VSCODE_DESKTOP', '/usr/share/applications/rembly-vscode.desktop')
+USERSET = os.path.expanduser(os.environ.get('REMBLY_VSCODE_SETTINGS', '~/.config/Code/User/settings.json'))
+WORK = os.environ.get('REMBLY_VSCODE_TMP', '/var/tmp/rembly-vscode')
+MIN_RAM_MB, MIN_FREE_MB = 1500, 1400
+
+SETTINGS = {                                    # the lightest reasonable configuration; the user's own keys always win
+    'window.titleBarStyle': 'native', 'window.menuBarVisibility': 'compact', 'window.zoomLevel': 0.5,
+    'editor.minimap.enabled': False, 'editor.smoothScrolling': False, 'editor.cursorSmoothCaretAnimation': 'off', 'editor.bracketPairColorization.enabled': False,
+    'editor.guides.bracketPairs': False, 'editor.renderWhitespace': 'none', 'editor.codeLens': False, 'editor.hover.delay': 600, 'editor.quickSuggestionsDelay': 300,
+    'editor.fontFamily': "'Fira Code', 'DejaVu Sans Mono', monospace", 'editor.fontSize': 15, 'editor.fontLigatures': False,
+    'workbench.enableExperiments': False, 'workbench.list.smoothScrolling': False, 'workbench.reduceMotion': 'on', 'workbench.startupEditor': 'none',
+    'workbench.tips.enabled': False, 'workbench.editor.enablePreview': True,
+    'telemetry.telemetryLevel': 'off', 'update.mode': 'none', 'extensions.autoUpdate': False, 'extensions.autoCheckUpdates': False, 'extensions.ignoreRecommendations': True,
+    'files.autoSave': 'off', 'files.watcherExclude': {'**/.git/objects/**': True, '**/node_modules/**': True, '**/.venv/**': True, '**/build/**': True, '**/dist/**': True},
+    'search.followSymlinks': False, 'search.exclude': {'**/node_modules': True, '**/.git': True, '**/build': True},
+    'git.autorefresh': False, 'git.autofetch': False, 'git.decorations.enabled': False,
+    'terminal.integrated.gpuAcceleration': 'off', 'terminal.integrated.smoothScrolling': False, 'terminal.integrated.fontSize': 14,
+    'breadcrumbs.enabled': False, 'problems.decorations.enabled': False,
+}
+FLAGS = ['--no-sandbox', '--disable-gpu', '--disable-gpu-compositing', '--disable-software-rasterizer', '--disable-dev-shm-usage', '--disable-smooth-scrolling',
+         '--disable-features=CalculateNativeWinOcclusion,MediaRouter', '--js-flags=--max-old-space-size=384', '--ozone-platform=x11']
+
+
+def say(t): print(t, flush=True)
+
+
+def run(cmd, **kw): return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, **kw)
+
+
+def facts():
+    """what the tablet offers; every line is a real measurement"""
+    ram = 0
+    try: ram = int([l for l in open('/proc/meminfo') if l.startswith('MemTotal')][0].split()[1]) // 1024
+    except Exception: pass
+    sw = 0
+    try: sw = int([l for l in open('/proc/meminfo') if l.startswith('SwapTotal')][0].split()[1]) // 1024
+    except Exception: pass
+    st = os.statvfs('/var/tmp' if os.path.isdir('/var/tmp') else '/'); free = st.f_bavail * st.f_frsize // 1048576
+    arch = run(['dpkg', '--print-architecture']).stdout.strip() or platform.machine()
+    return {'ram': ram, 'swap': sw, 'free': free, 'arch': arch, 'kernel': platform.release(), 'machine': platform.machine()}
+
+
+def verdict(f):
+    """(blockers, warnings): blockers stop the install, warnings are shown but do not"""
+    block, warn = [], []
+    if f['arch'] not in ('armhf', 'arm64') and f['machine'] not in ('armv7l', 'armv8l', 'aarch64'): block.append('архитектура %s: скрипт скачивает сборку для ARM' % f['arch'])
+    if f['ram'] and f['ram'] < MIN_RAM_MB: warn.append('оперативной памяти %d МиБ (< %d): VS Code будет часто упираться в память' % (f['ram'], MIN_RAM_MB))
+    if f['free'] < MIN_FREE_MB: block.append('свободно %d МиБ, нужно около %d МиБ (пакет ~100 МиБ + распаковка)' % (f['free'], MIN_FREE_MB))
+    if f['swap'] < 512: warn.append('нет файла подкачки: включите rembly-optimize (zram), иначе возможны вылеты по памяти')
+    try:
+        major = int(f['kernel'].split('.')[0]); minor = int(f['kernel'].split('.')[1])
+        if (major, minor) < (4, 4): warn.append('ядро %s старое: Electron (Chromium внутри VS Code) официально требует более новое. Запуск НЕ проверен на этом ядре' % f['kernel'])
+    except Exception: pass
+    return block, warn
+
+
+def fetch_meta():
+    req = urllib.request.Request(API, headers={'User-Agent': 'rembly-install-vscode'})
+    with urllib.request.urlopen(req, timeout=30) as r: m = json.loads(r.read().decode())
+    url, sha = m.get('url'), (m.get('sha256hash') or '').lower()
+    if not url or len(sha) != 64: raise RuntimeError('ответ сервера Microsoft без ссылки или контрольной суммы: %s' % str(m)[:200])
+    return {'url': url, 'sha256': sha, 'version': m.get('productVersion') or m.get('name') or '?'}
+
+
+def download(url, dest, sha):
+    """resumable download (wget -c) and a SHA-256 check; a file that does not match is deleted"""
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    if url.startswith(('http://', 'https://')) and shutil.which('wget'): rc = subprocess.call(['wget', '-c', '--progress=dot:giga', '-O', dest, url])
+    else:
+        rc = 0
+        try:
+            with urllib.request.urlopen(url, timeout=60) as r, open(dest, 'wb') as f: shutil.copyfileobj(r, f, 1 << 20)
+        except Exception as e: say('загрузка не удалась: %s' % e); rc = 1
+    if rc != 0: return False
+    h = hashlib.sha256()
+    with open(dest, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 20), b''): h.update(chunk)
+    if h.hexdigest() != sha:
+        say('КОНТРОЛЬНАЯ СУММА НЕ СОВПАЛА (%s...), файл удалён, ничего не установлено' % h.hexdigest()[:12])
+        try: os.remove(dest)
+        except OSError: pass
+        return False
+    return True
+
+
+def write_settings():
+    os.makedirs(os.path.dirname(USERSET), exist_ok=True); cur = {}
+    try: cur = json.load(open(USERSET))
+    except Exception: pass
+    for k, v in SETTINGS.items(): cur.setdefault(k, v)                       # the user's own values are kept
+    json.dump(cur, open(USERSET, 'w'), indent=2, ensure_ascii=False)
+
+
+def write_launcher():
+    exe = shutil.which('code') or '/usr/bin/code'
+    with open(WRAP, 'w') as f:
+        f.write('#!/bin/sh\n# VS Code for the A53 tablet without a GPU (written by rembly-install-vscode)\nexec nice -n 5 %s %s "$@"\n' % (exe, ' '.join(FLAGS)))
+    os.chmod(WRAP, 0o755)
+    with open(DESK, 'w') as f:
+        f.write('[Desktop Entry]\nType=Application\nName=Visual Studio Code\nComment=Официальный VS Code (тяжёлый: 2 ГБ ОЗУ и без GPU - см. rembly-install-vscode)\n'
+                'Exec=%s %%F\nIcon=vscode\nTerminal=false\nCategories=Development;IDE;\nStartupWMClass=Code\n' % WRAP)
+
+
+def status():
+    v = run(['dpkg-query', '-W', '-f', '${Version}', 'code']).stdout.strip() if shutil.which('dpkg-query') else ''
+    if v and 'no packages' not in v.lower() and not v.startswith('dpkg-query'): say('VS Code установлен: версия %s; запуск: code-rembly' % v); return 0
+    say('VS Code не установлен. Лёгкий встроенный редактор: rembly-code'); return 1
+
+
+def main(argv):
+    yes = '--yes' in argv or '-y' in argv
+    if '--status' in argv: return status()
+    f = facts(); block, warn = verdict(f)
+    say('Планшет: ОЗУ %d МиБ, подкачка %d МиБ, свободно %d МиБ, %s, ядро %s' % (f['ram'], f['swap'], f['free'], f['arch'], f['kernel']))
+    for w in warn: say('! ' + w)
+    for b in block: say('✖ ' + b)
+    if '--remove' in argv:
+        if os.geteuid() != 0: say('нужен root'); return 1
+        say(run(['apt-get', 'remove', '-y', 'code']).stdout[-400:])
+        for p in (WRAP, DESK):
+            try: os.remove(p)
+            except OSError: pass
+        say('VS Code удалён (настройки ~/.config/Code остались)'); return 0
+    if '--check' in argv: say('Итог: ' + ('можно пробовать (с предупреждениями выше)' if not block else 'установка невозможна') ); return 0 if not block else 1
+    if block: return 1
+    if os.geteuid() != 0: say('нужен root: запустите от root'); return 1
+    say('Что делает установка: скачивает официальный пакет (~100 МиБ), проверяет SHA-256, ставит его через apt и пишет запуск code-rembly с «лёгкими» флагами.')
+    say('Rembly Code (rembly-code) уже есть и работает без этого. VS Code на этом планшете НЕ проверен: он может не запуститься или тормозить.')
+    if not yes:
+        try: ans = input('Продолжить? [y/N] ').strip().lower()
+        except EOFError: ans = ''
+        if ans not in ('y', 'yes', 'д', 'да'): say('отменено'); return 0
+    try: meta = fetch_meta()
+    except Exception as e: say('не удалось получить данные у Microsoft: %s (нет сети?)' % e); return 1
+    say('Версия %s: %s' % (meta['version'], meta['url']))
+    deb = os.path.join(WORK, 'code_armhf.deb')
+    if not download(meta['url'], deb, meta['sha256']): return 1
+    say('Устанавливаю (apt)…'); r = run(['apt-get', 'install', '-y', '--no-install-recommends', deb]); say(r.stdout[-1500:])
+    if r.returncode != 0: say('apt не смог установить пакет (код %d). Ничего не сломано: система осталась прежней.' % r.returncode); return 1
+    try: os.remove(deb)
+    except OSError: pass
+    write_launcher(); write_settings()
+    say('Готово. Запуск: code-rembly (или значок «Visual Studio Code»). Если окно не появляется: запустите code-rembly в терминале и посмотрите сообщения.')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

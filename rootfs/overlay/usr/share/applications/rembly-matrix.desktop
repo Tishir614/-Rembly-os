@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Matrix
+Name[ru]=Матрица
+Comment=Цифровой дождь на весь экран (касание — выход)
+Exec=rembly-matrix
+Icon=utilities-terminal
+Terminal=false
+Categories=Utility;Screensaver;

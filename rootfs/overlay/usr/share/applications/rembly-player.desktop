@@ -1,0 +1,23 @@
+[Desktop Entry]
+Type=Application
+Name=Rembly Player
+Name[ru]=Плеер Rembly
+Comment=Музыка, видео и фото
+Exec=rembly-player %F
+Icon=multimedia-video-player
+Terminal=false
+Categories=AudioVideo;Audio;Video;Player;Graphics;Viewer;
+MimeType=audio/mpeg;audio/x-mp3;audio/flac;audio/x-flac;audio/ogg;audio/opus;audio/x-wav;audio/mp4;audio/aac;audio/x-ms-wma;video/mp4;video/x-matroska;video/webm;video/x-msvideo;video/quicktime;video/mpeg;video/x-flv;video/3gpp;image/jpeg;image/png;image/gif;image/bmp;image/webp;
+Actions=music;video;photos;
+
+[Desktop Action music]
+Name=Музыка
+Exec=rembly-player --tab music
+
+[Desktop Action video]
+Name=Видео
+Exec=rembly-player --tab video
+
+[Desktop Action photos]
+Name=Фото
+Exec=rembly-player --tab image

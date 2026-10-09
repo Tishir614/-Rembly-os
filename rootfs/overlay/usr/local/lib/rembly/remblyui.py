@@ -23,6 +23,18 @@ SHARE = os.environ.get('REMBLY_SHARE', '/usr/share/rembly')
 BAR = 40
 USER = os.environ.get('REMBLY_USER') or (open(CFG + '/user').read().strip() if os.path.exists(CFG + '/user') else 'Rembly')
 
+def style_name():
+    """'mono' (black-and-white fox, default) or 'hacker' (green terminal): ~/.config/rembly/style, set in Settings -> Screen or with `rembly-style`"""
+    try: v = open(CFG + '/style').read().strip()
+    except OSError: v = ''
+    return v if v in ('mono', 'hacker') else 'mono'
+
+
+STYLE = os.environ.get('REMBLY_STYLE') or style_name()
+HACKER = STYLE == 'hacker'
+ACCENT = (0.22, 1.0, 0.53) if HACKER else (1.0, 1.0, 1.0)          # the one colour of cairo-drawn widgets
+ACCENT_DIM = (0.08, 0.55, 0.28) if HACKER else (0.55, 0.55, 0.55)
+
 RU_DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
 RU_MON = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря']
 
@@ -151,6 +163,72 @@ entry.rl-search { background-color: rgba(255,255,255,0.12); color: #ffffff; bord
 .bar-lbl, .bar-btn { color: #f0f0f0; }
 """
 
+# ---- hacker style: green phosphor on black, terminal fonts, square corners. Loaded on top of CSS (priority USER+1) only when the style is 'hacker'. ----
+HACKER_CSS = b"""
+.rapp { background-image: linear-gradient(160deg, #010402, #040c07 55%, #08150d); color: #c9ffe0; }
+.rapp label, .rapp button, .rapp entry, .rapp treeview, .rapp textview, .rapp row { font-family: 'Fira Code', 'DejaVu Sans Mono', monospace; }
+.rapp label { color: #c9ffe0; }
+.rapp label.small, .rapp .dim { color: #7fd9a6; }
+.rcard-title, .rapp .ptitle { color: #39ff88; text-shadow: 0 0 10px rgba(57,255,136,0.55); }
+.rcard-big { color: #39ff88; text-shadow: 0 0 14px rgba(57,255,136,0.7); }
+.rapp button { background-image: linear-gradient(180deg, #0d2015, #050d08); border: 1px solid rgba(57,255,136,0.80); color: #b8ffd5; border-radius: 3px;
+               box-shadow: inset 0 0 0 2px rgba(0,0,0,0.75), inset 0 0 0 3px rgba(57,255,136,0.20); }
+.rapp button:hover { background-image: linear-gradient(180deg, #14331f, #08150d); border-color: #39ff88; }
+.rapp button:active { background-image: none; background-color: #39ff88; color: #02100a; }
+.rapp button:active label { color: #02100a; }
+.rapp button.btn-danger { background-image: linear-gradient(180deg, #39ff88, #15a257); color: #02100a; border-color: #8dffb9; }
+.rapp button.btn-danger label { color: #02100a; }
+.rapp button.btn-neutral { background-image: none; background-color: rgba(57,255,136,0.07); box-shadow: none; }
+.rapp progressbar trough, .rapp scale trough { background-color: rgba(57,255,136,0.12); border-radius: 2px; }
+.rapp progressbar progress, .rapp scale highlight, .rapp switch:checked { background-image: linear-gradient(90deg, #39ff88, #129e52); border-radius: 2px; }
+.rapp scale slider { background-color: #39ff88; border-radius: 3px; }
+.rapp switch { background-color: rgba(57,255,136,0.16); }
+.rapp switch slider { background-color: #c9ffe0; }
+.rapp treeview.view:selected { background-image: none; background-color: rgba(57,255,136,0.18); color: #eafff2; }
+.rapp stacksidebar row:selected, .rapp list row:selected, .rapp listbox row:selected { background-image: none; background-color: rgba(57,255,136,0.15); box-shadow: inset 3px 0 0 #39ff88; }
+.rapp entry { border: 1px solid rgba(57,255,136,0.60); border-radius: 3px; background-color: rgba(57,255,136,0.05); caret-color: #39ff88; color: #d8ffe8; }
+.rapp entry:focus { border-color: #39ff88; box-shadow: 0 0 8px rgba(57,255,136,0.5); }
+.rapp textview, .rapp textview text { background-color: rgba(0,12,5,0.70); color: #c9ffe0; border-radius: 3px; }
+.rapp notebook > header > tabs > tab:checked { box-shadow: inset 0 -3px 0 #39ff88; }
+.rcard { background-image: linear-gradient(160deg, rgba(57,255,136,0.08), rgba(57,255,136,0.02)); border: 1px solid rgba(57,255,136,0.55); border-radius: 3px; }
+.clock, .lockclock { color: #39ff88; font-family: 'Fira Code', monospace; text-shadow: 0 0 22px rgba(57,255,136,0.75); }
+.date, .lockhello { color: #9dffc4; font-family: 'Fira Code', monospace; text-shadow: 0 0 8px rgba(57,255,136,0.5); }
+.lockhint { color: #7fd9a6; font-family: 'Fira Code', monospace; }
+.lockbtn { background-image: linear-gradient(180deg, #39ff88, #15a257); color: #02100a; box-shadow: 0 0 22px rgba(57,255,136,0.45); }
+.pad { background-color: rgba(57,255,136,0.05); border: 1px solid rgba(57,255,136,0.75); color: #b8ffd5; font-family: 'Fira Code', monospace; }
+.pad:active { background-color: #39ff88; color: #02100a; border-color: #8dffb9; }
+.pad-ok { background-color: rgba(57,255,136,0.18); }
+.tile, .name, .small, .online { font-family: 'Fira Code', 'DejaVu Sans Mono', monospace; }
+.tile:hover, .tile:active, .dockbtn:hover, .dockbtn:active, .bar-btn:hover, .bar-btn:active { background-color: rgba(57,255,136,0.16); }
+.bar-lbl, .bar-btn { color: #b8ffd5; }
+.wsdot { color: #2f9a5c; } .wsdot.cur { color: #39ff88; text-shadow: 0 0 8px rgba(57,255,136,0.95); }
+.ff-title { color: #39ff88; text-shadow: 0 0 8px rgba(57,255,136,0.6); } .ff-line { color: #aaf5c8; } .ff-sep { color: #2a6b45; }
+.rplayer .tabbtn.cur { background-image: none; background-color: #39ff88; color: #02100a; }
+.rplayer .tabbtn.cur label { color: #02100a; }
+.rplayer .tport-big { background-image: none; background-color: #39ff88; }
+.rplayer .tport.on { background-image: none; background-color: rgba(57,255,136,0.30); }
+.rplayer .hud { color: #7fd9a6; }
+.rplayer .vbar { background-color: rgba(0,10,4,0.85); border-top: 1px solid rgba(57,255,136,0.5); }
+.rplayer .warn { color: #02100a; background-color: #39ff88; }
+.rcode notebook > header { background-color: #020805; border-bottom: 1px solid rgba(57,255,136,0.4); }
+.rcode notebook > header > tabs > tab { background-color: #020805; border-right: 1px solid rgba(57,255,136,0.2); }
+.rcode notebook > header > tabs > tab:checked { background-color: #0a1d11; box-shadow: inset 0 -2px 0 #39ff88; }
+.rcode .code-status { background-color: #02120a; border-top: 1px solid rgba(57,255,136,0.5); color: #39ff88; }
+.rcode paned > separator { background-color: rgba(57,255,136,0.4); }
+"""
+
+def tint_pixbuf(pb, floor=0.0):
+    """multiply a (grey) pixbuf by the accent colour: white line work becomes green; floor lifts the dark channels a little so it does not go muddy"""
+    try:
+        sf = cairo.ImageSurface(cairo.FORMAT_ARGB32, pb.get_width(), pb.get_height()); cr = cairo.Context(sf)
+        Gdk.cairo_set_source_pixbuf(cr, pb, 0, 0); cr.paint(); cr.set_operator(cairo.OPERATOR_MULTIPLY)
+        cr.set_source_rgb(*[floor * 0.4 + c * (1 - floor * 0.4) for c in ACCENT]); cr.paint()
+        cr.set_operator(cairo.OPERATOR_DEST_IN); Gdk.cairo_set_source_pixbuf(cr, pb, 0, 0); cr.paint()        # keep the original alpha
+        return Gdk.pixbuf_get_from_surface(sf, 0, 0, pb.get_width(), pb.get_height()) or pb
+    except Exception:
+        return pb
+
+
 def load_wallpaper(w, h):
     """(sharp, blurred) cairo surfaces covering w x h. Native GdkPixbuf only (no PIL): scale-to-cover, then the glass blur is a
     cheap down/up-scale (box-like blur) done once at startup."""
@@ -162,6 +240,7 @@ def load_wallpaper(w, h):
         except Exception: pb = None
     if pb is None:
         pb = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, False, 8, w, h); pb.fill(0x1e1646ff)
+    elif HACKER and path == SHARE + '/wallpaper.png': pb = tint_pixbuf(pb, 0.45)       # the grey fox wallpaper turns phosphor green; a wallpaper the user chose stays as it is
     s = max(w / pb.get_width(), h / pb.get_height())
     sw_, sh_ = max(w, math.ceil(pb.get_width() * s)), max(h, math.ceil(pb.get_height() * s))
     pb = pb.scale_simple(sw_, sh_, GdkPixbuf.InterpType.BILINEAR)
@@ -209,7 +288,7 @@ class Glass(Gtk.Box):
         sheen = cairo.LinearGradient(0, 0, 0, min(h, 220)); sheen.add_color_stop_rgba(0, 1, 1, 1, 0.06); sheen.add_color_stop_rgba(1, 1, 1, 1, 0)   # light falling on glass
         cr.set_source(sheen); cr.paint(); cr.restore()
         rrect(cr, 0.75, 0.75, w - 1.5, h - 1.5, self.radius)
-        edge = cairo.LinearGradient(0, 0, w, h); edge.add_color_stop_rgba(0, 1, 1, 1, 0.95); edge.add_color_stop_rgba(0.5, 0.82, 0.82, 0.82, 0.80); edge.add_color_stop_rgba(1, 1, 1, 1, 0.90)
+        edge = cairo.LinearGradient(0, 0, w, h); ar, ag, ab = ACCENT; edge.add_color_stop_rgba(0, ar, ag, ab, 0.95); edge.add_color_stop_rgba(0.5, ar * 0.82, ag * 0.82, ab * 0.82, 0.80); edge.add_color_stop_rgba(1, ar, ag, ab, 0.90)
         cr.set_source(edge); cr.set_line_width(1.8); cr.stroke()                  # thin light-pink frame, like a tiled window
         return Gtk.Box.do_draw(self, cr)
 
@@ -242,7 +321,7 @@ def icon(names, px):
 
 _TILES = {}
 ICON_CACHE = os.path.join(os.path.expanduser('~'), '.cache', 'rembly', 'icons')
-TILE_VER = 'm1'
+TILE_VER = 'm1' + ('h' if HACKER else '')
 
 
 def _cache_path(kind, name, px):
@@ -275,7 +354,16 @@ def _mono_pixbuf(pb):
         return pb
 
 
+def _tinted(pb):
+    return tint_pixbuf(pb) if HACKER and pb is not None else pb
+
+
 def load_icon_pixbuf(names, px):
+    pb, n = _load_icon_pixbuf(names, px)
+    return _tinted(pb), n
+
+
+def _load_icon_pixbuf(names, px):
     """Theme icon as a WHITE glyph Pixbuf (symbolic variant if the theme has one, otherwise the coloured icon turned into white line work),
     rendered ONCE and kept as a PNG on disk (SVG rendering costs ~13 ms each on a fast PC, far more on the A53)."""
     for n in names:
@@ -330,9 +418,9 @@ def tile_icon(names, px):
     r = px * 0.17
     g = cairo.LinearGradient(0, 0, 0, px); g.add_color_stop_rgb(0, 0.17, 0.17, 0.17); g.add_color_stop_rgb(1, 0.045, 0.045, 0.045)
     rrect(cr, 1.5, 1.5, px - 3, px - 3, r); cr.set_source(g); cr.fill()
-    rrect(cr, 1.5, 1.5, px - 3, px - 3, r); cr.set_source_rgba(0.94, 0.94, 0.94, 0.96); cr.set_line_width(max(1.6, px * 0.04)); cr.stroke()          # outer light frame
+    rrect(cr, 1.5, 1.5, px - 3, px - 3, r); cr.set_source_rgba(ACCENT[0] * 0.94, ACCENT[1] * 0.94, ACCENT[2] * 0.94, 0.96); cr.set_line_width(max(1.6, px * 0.04)); cr.stroke()          # outer light frame
     i = px * 0.085; rrect(cr, i, i, px - 2 * i, px - 2 * i, max(1, r - i * 0.6)); cr.set_source_rgba(0, 0, 0, 0.75); cr.set_line_width(max(1.0, px * 0.026)); cr.stroke()   # dark groove
-    i2 = px * 0.105; rrect(cr, i2, i2, px - 2 * i2, px - 2 * i2, max(1, r - i2 * 0.6)); cr.set_source_rgba(1, 1, 1, 0.20); cr.set_line_width(1.0); cr.stroke()           # inner highlight
+    i2 = px * 0.105; rrect(cr, i2, i2, px - 2 * i2, px - 2 * i2, max(1, r - i2 * 0.6)); cr.set_source_rgba(ACCENT[0], ACCENT[1], ACCENT[2], 0.20); cr.set_line_width(1.0); cr.stroke()           # inner highlight
     off = (px - pb.get_width()) / 2
     Gdk.cairo_set_source_pixbuf(cr, pb, off, off); cr.paint()
     _TILES[key] = sf
@@ -450,7 +538,7 @@ class Avatar(Gtk.DrawingArea):
     def do_draw(self, cr):
         w, h = self.get_allocated_width(), self.get_allocated_height(); r = min(w, h) / 2 - 2
         if self.pb is not None:
-            cr.set_source_rgba(1, 1, 1, 0.85); cr.arc(w / 2, h / 2, r + 1, 0, 2 * math.pi); cr.set_line_width(1.6); cr.stroke()
+            cr.set_source_rgba(ACCENT[0], ACCENT[1], ACCENT[2], 0.85); cr.arc(w / 2, h / 2, r + 1, 0, 2 * math.pi); cr.set_line_width(1.6); cr.stroke()
             Gdk.cairo_set_source_pixbuf(cr, self.pb, (w - self.pb.get_width()) / 2, (h - self.pb.get_height()) / 2); cr.paint(); return
         cx, cy = w / 2, h / 2 + 3
         g = cairo.LinearGradient(0, 0, w, h); g.add_color_stop_rgb(0, .85, .8, 1); g.add_color_stop_rgb(1, .55, .5, .9)
@@ -494,6 +582,9 @@ def init_theme():
     THEME = Gtk.IconTheme.get_default()
     p = Gtk.CssProvider(); p.load_from_data(CSS)
     Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), p, Gtk.STYLE_PROVIDER_PRIORITY_USER)
+    if HACKER:
+        h = Gtk.CssProvider(); h.load_from_data(HACKER_CSS)
+        Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), h, Gtk.STYLE_PROVIDER_PRIORITY_USER + 1)
 
 
 def style_app(win):
@@ -513,6 +604,7 @@ class Meter(Gtk.DrawingArea):
     """Coloured bar with an icon dot, a title and a value: one per storage category / memory / load."""
     def __init__(self, title, c1=(1.0, 1.0, 1.0), c2=(0.55, 0.55, 0.55), emoji=''):
         super().__init__(); self.title, self.val, self.frac, self.c1, self.c2, self.emoji = title, '…', 0.0, c1, c2, emoji
+        if HACKER: self.c1, self.c2 = ACCENT, ACCENT_DIM
         self.set_size_request(-1, 64)
 
     def set(self, frac, val):
@@ -520,8 +612,8 @@ class Meter(Gtk.DrawingArea):
 
     def do_draw(self, cr):
         w, h = self.get_allocated_width(), self.get_allocated_height()
-        cr.arc(24, 24, 18, 0, 6.2832); cr.set_source_rgba(0.05, 0.05, 0.05, 1); cr.fill_preserve(); cr.set_source_rgba(0.94, 0.94, 0.94, 0.9); cr.set_line_width(1.6); cr.stroke()
-        cr.select_font_face('Noto Sans', 0, 1); cr.set_font_size(18); cr.set_source_rgb(1, 1, 1)
+        cr.arc(24, 24, 18, 0, 6.2832); cr.set_source_rgba(0.05, 0.05, 0.05, 1); cr.fill_preserve(); cr.set_source_rgba(ACCENT[0] * 0.94, ACCENT[1] * 0.94, ACCENT[2] * 0.94, 0.9); cr.set_line_width(1.6); cr.stroke()
+        cr.select_font_face('Noto Sans', 0, 1); cr.set_font_size(18); cr.set_source_rgb(*ACCENT)
         e = cr.text_extents(self.emoji or self.title[:1]); cr.move_to(24 - e.width / 2 - e.x_bearing, 24 - e.height / 2 - e.y_bearing); cr.show_text(self.emoji or self.title[:1])
         cr.select_font_face('Noto Sans', 0, 1); cr.set_font_size(15); cr.set_source_rgb(0.97, 0.95, 1); cr.move_to(54, 20); cr.show_text(self.title)
         cr.select_font_face('Noto Sans', 0, 0); cr.set_font_size(14); cr.set_source_rgb(0.82, 0.77, 0.97)
@@ -531,6 +623,71 @@ class Meter(Gtk.DrawingArea):
         if self.frac > 0:
             fw = max(bh, bw * self.frac); rrect(cr, bx, by, fw, bh, 7)
             g = cairo.LinearGradient(bx, 0, bx + bw, 0); g.add_color_stop_rgb(0, *self.c1); g.add_color_stop_rgb(1, *self.c2); cr.set_source(g); cr.fill()
+
+
+class MatrixRain:
+    """Digital rain for the hacker style (lock screen, Matrix screensaver). Built for a GPU-less A53:
+    one persistent ARGB surface; per frame the trails fade (a single alpha fill) and each falling column draws ONE new glyph blitted from a pre-rendered atlas.
+    Runs only between start() and stop(), skips frames while the system is busy, and works at about 8 frames per second."""
+    GLYPHS = '0123456789ABCDEF<>{}[]()/\\|=+*#$%&@:;?!~^ЖЩЮЯФЛДИЗ'
+    CW, CH = 16, 24
+
+    def __init__(self, w, h, widget=None, fps=8, density=0.55):
+        self.w, self.h, self.widget, self.fps = w, h, widget, fps
+        self.cols = max(1, w // self.CW); self.rows = max(1, h // self.CH)
+        self.surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, w, h)
+        self.head = [-1] * self.cols; self.speed = [0.0] * self.cols; self.acc = [0.0] * self.cols; self.wait = [0] * self.cols; self.last = [None] * self.cols
+        import random
+        self.rnd = random.Random()
+        for c in range(self.cols):
+            self.reset(c, True)
+        self.density = density; self.tid = 0; self.paused = False; self.build_atlas()
+
+    def build_atlas(self):
+        """glyph atlas: row 0 = leading glyph (almost white), row 1 = trail glyph (accent colour)"""
+        n = len(self.GLYPHS); sf = cairo.ImageSurface(cairo.FORMAT_ARGB32, n * self.CW, self.CH * 2); cr = cairo.Context(sf)
+        cr.select_font_face('Fira Code', cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD); cr.set_font_size(self.CH * 0.72)
+        for i, g in enumerate(self.GLYPHS):
+            e = cr.text_extents(g)
+            for row, col in ((0, (0.86, 1.0, 0.92)), (1, ACCENT)):
+                cr.set_source_rgb(*col); cr.move_to(i * self.CW + (self.CW - e.width) / 2 - e.x_bearing, row * self.CH + self.CH * 0.78); cr.show_text(g)
+        self.atlas = sf
+
+    def reset(self, c, first=False):
+        self.head[c] = -self.rnd.randint(0, self.rows if first else self.rows // 3) - 1
+        self.speed[c] = self.rnd.uniform(0.35, 1.0); self.wait[c] = 0; self.last[c] = None
+
+    def step(self):
+        """advance one frame (pure drawing, no GTK calls)"""
+        cr = cairo.Context(self.surf)
+        cr.set_operator(cairo.OPERATOR_DEST_OUT); cr.set_source_rgba(0, 0, 0, 0.13); cr.paint()           # trails fade out
+        cr.set_operator(cairo.OPERATOR_SOURCE); n = len(self.GLYPHS)
+        for c in range(self.cols):
+            self.acc[c] += self.speed[c]
+            if self.acc[c] < 1.0: continue
+            self.acc[c] -= 1.0; r = self.head[c]
+            if self.last[c] is not None and 0 <= r < self.rows:                                             # the glyph the head just left turns from white to the accent colour
+                cr.set_source_surface(self.atlas, c * self.CW - self.last[c] * self.CW, r * self.CH - self.CH); cr.rectangle(c * self.CW, r * self.CH, self.CW, self.CH); cr.fill()
+            self.head[c] = r = r + 1
+            if 0 <= r < self.rows:
+                gi = self.rnd.randrange(n); self.last[c] = gi
+                cr.set_source_surface(self.atlas, c * self.CW - gi * self.CW, r * self.CH); cr.rectangle(c * self.CW, r * self.CH, self.CW, self.CH); cr.fill()
+            elif r >= self.rows + self.rnd.randint(2, 12): self.reset(c)
+
+    def start(self):
+        if not self.tid: self.tid = GLib.timeout_add(int(1000 / self.fps), self.tick)
+
+    def stop(self):
+        if self.tid: GLib.source_remove(self.tid); self.tid = 0
+
+    def tick(self):
+        if not self.paused and not system_busy():
+            self.step()
+            if self.widget is not None: self.widget.queue_draw()
+        return True
+
+    def paint(self, cr):
+        cr.set_source_surface(self.surf, 0, 0); cr.paint()
 
 
 def screen_size():

@@ -1,0 +1,18 @@
+/* Rembly OS, hacker style: phosphor green on black for every GTK3 app (Thunar, Geany, ...). Rembly's own apps add their rules on top. */
+@define-color theme_selected_bg_color #39ff88;
+@define-color theme_selected_fg_color #02100a;
+@define-color theme_bg_color #040b07;
+@define-color theme_base_color #050e09;
+@define-color theme_fg_color #c9ffe0;
+@define-color theme_text_color #c9ffe0;
+@define-color borders #1f7a46;
+@define-color insensitive_bg_color #07120c;
+button { background-image: linear-gradient(#0d2015, #050d08); border: 1px solid rgba(57,255,136,0.75); border-radius: 3px; color: #b8ffd5; box-shadow: none; text-shadow: none; min-height: 36px; min-width: 36px; }
+button:hover { border-color: #39ff88; }
+button:active, button:checked { background-image: none; background-color: #39ff88; color: #02100a; }
+entry, spinbutton { background-color: #030a06; color: #d8ffe8; border: 1px solid rgba(57,255,136,0.55); border-radius: 3px; caret-color: #39ff88; }
+progressbar progress, scale highlight { background-image: linear-gradient(90deg, #39ff88, #129e52); border-radius: 2px; }
+switch:checked { background-image: linear-gradient(90deg, #39ff88, #129e52); }
+scrollbar slider { min-width: 12px; min-height: 12px; border-radius: 3px; background-color: rgba(57,255,136,0.45); }
+menuitem, row, treeview.view { min-height: 38px; }
+*:selected, row:selected, treeview.view:selected { background-color: #39ff88; color: #02100a; }

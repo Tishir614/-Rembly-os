@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<style-scheme id="rembly" name="Rembly Mono" version="1.0">
+  <author>Rembly OS</author>
+  <description>Black and white: weight and shade instead of colour</description>
+  <style name="text" foreground="#e6e6e6" background="#080808"/>
+  <style name="selection" foreground="#050505" background="#dcdcdc"/>
+  <style name="cursor" foreground="#ffffff"/>
+  <style name="current-line" background="#161616"/>
+  <style name="line-numbers" foreground="#6a6a6a" background="#080808"/>
+  <style name="current-line-number" foreground="#ffffff" bold="true"/>
+  <style name="bracket-match" foreground="#050505" background="#d0d0d0" bold="true"/>
+  <style name="bracket-mismatch" foreground="#ffffff" background="#4a4a4a" underline="true"/>
+  <style name="right-margin" foreground="#262626"/>
+  <style name="search-match" foreground="#050505" background="#b8b8b8"/>
+  <style name="draw-spaces" foreground="#333333"/>
+  <style name="def:comment" foreground="#7a7a7a" italic="true"/>
+  <style name="def:shebang" foreground="#7a7a7a" bold="true"/>
+  <style name="def:doc-comment-element" foreground="#8c8c8c" italic="true"/>
+  <style name="def:string" foreground="#c2c2c2"/>
+  <style name="def:special-char" foreground="#ffffff"/>
+  <style name="def:character" foreground="#c2c2c2"/>
+  <style name="def:constant" foreground="#ffffff"/>
+  <style name="def:number" foreground="#ffffff"/>
+  <style name="def:floating-point" foreground="#ffffff"/>
+  <style name="def:decimal" foreground="#ffffff"/>
+  <style name="def:base-n-integer" foreground="#ffffff"/>
+  <style name="def:boolean" foreground="#ffffff" bold="true"/>
+  <style name="def:special-constant" foreground="#ffffff" bold="true"/>
+  <style name="def:keyword" foreground="#ffffff" bold="true"/>
+  <style name="def:statement" foreground="#ffffff" bold="true"/>
+  <style name="def:type" foreground="#f0f0f0" underline="true"/>
+  <style name="def:function" foreground="#f4f4f4"/>
+  <style name="def:builtin" foreground="#dcdcdc" italic="true"/>
+  <style name="def:preprocessor" foreground="#a0a0a0" bold="true"/>
+  <style name="def:identifier" foreground="#e6e6e6"/>
+  <style name="def:operator" foreground="#bdbdbd"/>
+  <style name="def:error" foreground="#ffffff" background="#5a5a5a" bold="true"/>
+  <style name="def:warning" foreground="#ffffff" underline="true"/>
+  <style name="def:note" foreground="#ffffff" bold="true" italic="true"/>
+  <style name="def:underlined" underline="true"/>
+</style-scheme>
