@@ -3,6 +3,8 @@
   rembley-repair check      list missing / changed Rembley files, missing Ubuntu packages, missing connectivity drivers (exit 0 = all complete)
   rembley-repair fix        repair what can be repaired right now (needs network for downloads)
   rembley-repair fix --all  also restore files that were CHANGED (overwrites your edits of Rembley's own programs)
+  rembley-repair firstboot  first start after flashing: deep check (our files by hash, every Ubuntu package file by dpkg -V), waits for the network, downloads what
+                            did not arrive or arrived damaged; repeats at the next starts until complete (rc.d/07-firstrepair.sh)
   rembley-repair auto       at every login (started by the desktop): quick local check; if something is missing, wait for the network, then fix
   rembley-repair fix --from DIR   take the files from a folder with a copy of the repository (USB stick) instead of the network
   rembley-repair manifest DIR   print the manifest of an overlay folder (used by the image build and by rembley-update)
@@ -123,13 +125,70 @@ def fix(allfiles=False):
     return 0 if left == 0 else 1
 
 
+def deep_pkg_verify():
+    """First boot only: dpkg checks every file of every installed package against its md5sums (slow on eMMC -> lowest CPU and I/O priority).
+    Returns {package: [bad files]} for files that are MISSING or DAMAGED. Our own files (they replaced some package files on purpose), config files
+    and anything under /etc /var /usr/share/doc are ignored."""
+    if ROOT: return {}
+    ours = {'/' + p for p in load_manifest()}
+    try:
+        out = subprocess.run(['nice', '-n', '19', 'ionice', '-c3', 'dpkg', '-V'], capture_output=True, text=True, timeout=1500).stdout
+    except Exception as e:
+        log('deep package check did not finish: %s' % e); return {}
+    bad = []
+    for l in out.splitlines():
+        parts = l.split(None, 2)
+        if len(parts) < 2: continue
+        flags, rest = parts[0], l[len(parts[0]):].strip()
+        isconf = rest.startswith('c ')
+        path = rest[2:].strip() if isconf else rest
+        if isconf or not path.startswith('/') or path in ours or path.startswith(('/etc/', '/var/', '/usr/share/doc/', '/usr/share/man/', '/usr/lib/python3/dist-packages/__pycache__')) or '__pycache__' in path: continue
+        if flags == 'missing' or '5' in flags[:3] or flags[2:3] == '5': bad.append(path)
+    pk = {}
+    for path in bad[:400]:
+        r = subprocess.run(['dpkg', '-S', path], capture_output=True, text=True)
+        if r.returncode == 0: pk.setdefault(r.stdout.split(':')[0].strip(), []).append(path)
+    return pk
+
+
+def firstboot():
+    """The first start after flashing: find EVERYTHING that did not arrive intact and fetch it. Runs until it succeeds (flag), at most 6 boots."""
+    flag, tries = STATE + '/repair-firstboot-done', STATE + '/repair-firstboot-tries'
+    if os.path.exists(flag): return 0
+    os.makedirs(STATE, exist_ok=True)
+    n = int(open(tries).read()) if os.path.exists(tries) else 0
+    if n >= 6: log('first-boot repair gave up after 6 boots: run rembley-repair fix'); return 1
+    open(tries, 'w').write(str(n + 1))
+    r = check(); deep = deep_pkg_verify()
+    # on the very first start nothing was edited yet, so a file that differs from the manifest is damage: restore it too
+    todo = len(r['missing']) + len(r['changed']) + len(r['packages']) + sum(len(v) for v in deep.values()) + (1 if r['drivers'] else 0)
+    log('first start: %d missing file(s), %d damaged, %d missing package(s), %d package(s) with damaged files, drivers %s' % (
+        len(r['missing']), len(r['changed']), len(r['packages']), len(deep), 'missing' if r['drivers'] else 'ok'))
+    if todo == 0 or (todo == 1 and r['drivers'] and not (r['missing'] or r['changed'])):
+        if todo: log('only the connectivity drivers are missing: rembley-autosetup handles them')
+        open(flag, 'w').write(str(int(time.time()))); log('first-start check: everything arrived intact'); return 0
+    notify('Rembley: часть файлов не доехала', 'Найдено: %d. Докачаю при первом подключении к сети (Wi-Fi: значок в трее).' % todo)
+    waited = 0
+    while not ROOT and not online() and waited < 1800: time.sleep(20); waited += 20
+    if not ROOT and not online(): log('no network within 30 minutes: will try again at the next start'); return 2
+    rc = fix(allfiles=True)
+    for pkg in sorted(deep):                                                        # damaged files of Ubuntu packages: reinstall just those packages
+        log('reinstalling %s (damaged: %s)' % (pkg, ', '.join(deep[pkg][:3])))
+        subprocess.run(['apt-get', 'install', '--reinstall', '-y', '--no-install-recommends', pkg])
+    r2 = check()
+    if problems(r2) - (1 if r2['drivers'] else 0) + len(r2['changed']) == 0:
+        open(flag, 'w').write(str(int(time.time()))); log('first-start repair complete'); notify('Rembley: всё докачано', 'Файлы системы на месте')
+        return 0
+    log('first-start repair incomplete (rc=%d); will retry at the next start' % rc); notify('Rembley: докачано не всё', 'Повторю при следующем запуске. Подробности: rembley-repair check'); return 1
+
+
 def auto():
     r = check()
     if problems(r) == 0: return 0                                                  # the normal case: nothing to do, nothing shown
     log('login check: %d missing file(s), %d missing package(s), drivers %s' % (len(r['missing']), len(r['packages']), 'missing' if r['drivers'] else 'ok'))
     notify('Rembley: не хватает файлов', 'Найдено недостающее (%d). Докачаю сам, как только появится сеть.' % problems(r))
     waited = 0
-    while not online() and waited < 1800: time.sleep(20); waited += 20             # up to 30 minutes for Wi-Fi
+    while not ROOT and not online() and waited < 1800: time.sleep(20); waited += 20             # up to 30 minutes for Wi-Fi
     rc = fix()
     notify('Rembley: недостающее восстановлено' if rc == 0 else 'Rembley: восстановлено не всё', 'Подробности: rembley-repair check' if rc else 'Проверка пройдена')
     return rc
@@ -142,4 +201,5 @@ if __name__ == '__main__':
     elif cmd == 'check': r = check(); show(r); sys.exit(0 if problems(r) == 0 else 1)
     elif cmd == 'fix': sys.exit(fix('--all' in sys.argv))
     elif cmd == 'auto': sys.exit(auto())
+    elif cmd == 'firstboot': sys.exit(firstboot())
     else: print(__doc__)

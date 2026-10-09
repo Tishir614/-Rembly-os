@@ -70,6 +70,14 @@ s_net() {
   if [ -d /sys/class/net/wlan0 ]; then echo "интерфейс wlan0 поднят, MAC $(cat /sys/class/net/wlan0/address)"; ret 0
   else echo "wlan0 не появился: $(rembley-net preflight 2>/dev/null | grep MISSING | head -1 | sed 's/^ *//')"; ret 1; fi
 }
+s_files() {
+  # reflects the first-start repair (rembley-repair firstboot, started from rc.d/07): everything that did not arrive intact is fetched
+  if [ -e $D/repair-firstboot-done ]; then echo "все файлы системы на месте (проверено: файлы Rembley по хэшам, файлы пакетов Ubuntu через dpkg)"; ret 0; return; fi
+  if /usr/local/bin/rembley-repair check >/dev/null 2>&1; then echo "файлы Rembley и пакеты на месте; глубокая проверка пакетов ещё идёт"; ret 2; return; fi
+  have_net || { echo "часть файлов не доехала: докачаю, как только появится Wi-Fi (rembley-repair check — что именно)"; ret 2; return; }
+  /usr/local/bin/rembley-repair fix --all >>/var/log/rembley-repair.log 2>&1
+  if /usr/local/bin/rembley-repair check >/dev/null 2>&1; then echo "недостающие файлы докачаны"; ret 0; else echo "докачано не всё: $(tail -n 1 /var/log/rembley-repair.log)"; ret 1; fi
+}
 s_chips() {
   /usr/local/bin/rembley-chips adapt >/dev/null 2>&1; j=$(/usr/local/bin/rembley-chips --json 2>/dev/null)
   st() { echo "$j" | python3 -c "import json,sys; d=json.load(sys.stdin); print(next((f['state'] for f in d['functions'] if f['function']==sys.argv[1]),'?'))" "$1" 2>/dev/null; }
@@ -96,15 +104,15 @@ s_update() {
 
 [ -n "$REMBLEY_AUTO_STEPS" ] && . "$REMBLEY_AUTO_STEPS"      # test hook: replaces the s_* functions
 [ "$1" = --pending ] && {
-  for n in device ram dirs locale hostname caches touch drivers net chips selftest update; do
+  for n in device ram dirs locale hostname caches touch drivers net files chips selftest update; do
     [ -e $D/auto-$n.pass ] && continue; [ "$(tries $n)" -ge 3 ] && continue; exit 0; done; exit 1; }
 
 echo "=== rembley-autosetup $(date '+%F %T')"
-for n in device ram dirs locale hostname caches touch drivers net chips selftest update; do run $n s_$n; done
+for n in device ram dirs locale hostname caches touch drivers net files chips selftest update; do run $n s_$n; done
 {
   echo "Автонастройка Rembley, $(date '+%F %T')"; echo
   nfail=0; nwait=0; nwarn=0
-  for n in device ram dirs locale hostname caches touch drivers net chips selftest update; do
+  for n in device ram dirs locale hostname caches touch drivers net files chips selftest update; do
     printf '%-5s %-9s %s\n' "${RES[$n]}" "$n" "${DET[$n]}"
     case ${RES[$n]} in FAIL) nfail=$((nfail+1));; WAIT) nwait=$((nwait+1));; WARN) nwarn=$((nwarn+1));; esac
   done
