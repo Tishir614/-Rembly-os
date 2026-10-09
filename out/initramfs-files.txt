@@ -15,7 +15,7 @@
 100755  1162208 sbin/adbd
 100755     5421 init
 100644       77 etc/mdev.conf
-100644  1109641 splash.32.gz
-100644   399417 splash.16.gz
+100644    46260 splash.32.gz
+100644    22231 splash.16.gz
 120777        7 bin/sh
 120777       17 system/bin/sh
