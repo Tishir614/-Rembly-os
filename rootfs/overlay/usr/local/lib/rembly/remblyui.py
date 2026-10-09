@@ -16,7 +16,9 @@ except Exception:
 import cairo
 
 DEMO = bool(os.environ.get('REMBLY_DEMO'))          # fills widgets with sample data (screenshots only)
-CFG = os.path.expanduser('~/.config/rembly'); os.makedirs(CFG, exist_ok=True)
+CFG = os.path.expanduser('~/.config/rembly')
+try: os.makedirs(CFG, exist_ok=True)
+except OSError: pass                                 # read-only home: the UI still starts (settings just are not saved)
 SHARE = os.environ.get('REMBLY_SHARE', '/usr/share/rembly')
 BAR = 40
 USER = os.environ.get('REMBLY_USER') or (open(CFG + '/user').read().strip() if os.path.exists(CFG + '/user') else 'Rembly')
