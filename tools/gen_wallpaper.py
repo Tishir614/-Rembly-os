@@ -1,90 +1,90 @@
 #!/usr/bin/env python3
-"""Procedural 'night portal' wallpaper for Rembley OS (original artwork, no external assets).
-usage: gen_wallpaper.py OUT.png [W H]   default 1280x800"""
-import math, random, sys
+"""Sakura wallpaper (procedural): hot-pink hair-like flows, soft bokeh, large lilies and drifting petals on a dark mauve ground - the colours of the
+reference rice. It is NOT the artist's picture (that file is not available at usable resolution): put your own image at ~/.config/rembley/wallpaper.png
+(or Settings) and every panel recolours its glass from it automatically.
+usage: tools/gen_wallpaper.py [OUT.png] [W H]"""
+import math, os, random, sys
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
-W = int(sys.argv[2]) if len(sys.argv) > 3 else 1280
-H = int(sys.argv[3]) if len(sys.argv) > 3 else 800
-rnd = random.Random(73)
-y, x = np.mgrid[0:H, 0:W].astype(np.float32)
-# sky gradient: deep indigo top -> violet -> magenta haze at the floor
-t = y / H
-top, mid, low = np.array([10, 8, 38]), np.array([46, 28, 98]), np.array([118, 62, 150])
-col = np.where(t[..., None] < .6, top + (mid - top) * (t[..., None] / .6),
-               mid + (low - mid) * ((t[..., None] - .6) / .4))
-# portal glow (right of centre)
-cx, cy, R = W * .55, H * .52, H * .36
-d = np.hypot(x - cx, y - cy)
-glow = np.exp(-((d - R) / (R * .55)) ** 2)[..., None]
-col += glow * np.array([70, 55, 120])
-inside = (d < R)[..., None]
-col = np.where(inside, col * .55 + np.array([95, 80, 175]) * (1 - d[..., None] / R) * .55 + 30, col)
-img = Image.fromarray(np.clip(col, 0, 255).astype(np.uint8)).convert('RGB')
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, 'rootfs/overlay/usr/share/rembley/wallpaper.png')
+W, H = (int(sys.argv[2]), int(sys.argv[3])) if len(sys.argv) > 3 else (1920, 1200)
+rnd = random.Random(7)
 
-def layer(): return Image.new('RGBA', (W, H), (0, 0, 0, 0))
-# stars
-st = layer(); sd = ImageDraw.Draw(st)
-for _ in range(420):
-    sx, sy = rnd.randrange(W), rnd.randrange(int(H * .75)); r = rnd.choice([.6, .8, 1, 1, 1.4, 2])
-    a = rnd.randrange(90, 255); sd.ellipse([sx - r, sy - r, sx + r, sy + r], fill=(235, 230, 255, a))
-for _ in range(14):                         # sparkle stars
-    sx, sy = rnd.randrange(W), rnd.randrange(int(H * .6)); L = rnd.randrange(6, 14)
-    sd.line([sx - L, sy, sx + L, sy], fill=(255, 255, 255, 200), width=1)
-    sd.line([sx, sy - L, sx, sy + L], fill=(255, 255, 255, 200), width=1)
-img = Image.alpha_composite(img.convert('RGBA'), st.filter(ImageFilter.GaussianBlur(.6)))
+# 1. ground: dark mauve -> deep magenta -> rose (diagonal)
+y, x = np.mgrid[0:H, 0:W].astype(np.float32); t = np.clip((x / W * 0.55 + (1 - y / H) * 0.65) / 1.2, 0, 1)
+stops = [(0.0, (26, 10, 26)), (0.3, (96, 22, 74)), (0.62, (214, 60, 132)), (1.0, (255, 150, 196))]
+img = np.zeros((H, W, 3), np.float32)
+for (a, ca), (b, cb) in zip(stops, stops[1:]):
+    m = (t >= a) & (t <= b); k = ((t - a) / (b - a))[..., None]
+    img = np.where(m[..., None], np.array(ca, np.float32) * (1 - k) + np.array(cb, np.float32) * k, img)
+base = Image.fromarray(img.astype(np.uint8)).convert('RGBA')
 
-# portal ring
-ring = layer(); rd = ImageDraw.Draw(ring)
-for i, (rr, w, a) in enumerate([(R + 18, 14, 200), (R + 42, 5, 120), (R - 12, 4, 160)]):
-    rd.ellipse([cx - rr, cy - rr, cx + rr, cy + rr], outline=(200, 190, 255, a), width=w)
-img = Image.alpha_composite(img, ring.filter(ImageFilter.GaussianBlur(1.2)))
-img = Image.alpha_composite(img, ring.filter(ImageFilter.GaussianBlur(14)))
 
-# crescent moon (top-left of centre)
-mx, my, mr = W * .30, H * .17, 46
-moon = layer(); md = ImageDraw.Draw(moon)
-md.ellipse([mx - mr, my - mr, mx + mr, my + mr], fill=(222, 214, 255, 255))
-md.ellipse([mx - mr + 24, my - mr - 6, mx + mr + 24, my + mr - 6], fill=(0, 0, 0, 0))
-mask = Image.new('L', (W, H), 0); ImageDraw.Draw(mask).ellipse([mx - mr, my - mr, mx + mr, my + mr], fill=255)
-ImageDraw.Draw(mask).ellipse([mx - mr + 24, my - mr - 6, mx + mr + 24, my + mr - 6], fill=0)
-moon.putalpha(mask)
-img = Image.alpha_composite(img, moon.filter(ImageFilter.GaussianBlur(14)))
-img = Image.alpha_composite(img, moon)
+TRANS = (255, 205, 228, 0)          # transparent pixels carry a PINK colour, so blurring never creates dark fringes
 
-# floating islands inside the portal (castle silhouette on the biggest)
-isl = layer(); idr = ImageDraw.Draw(isl)
-def island(px, py, w, h, c):
-    pts = [(px - w / 2, py)]
-    for k in range(1, 9): pts.append((px - w / 2 + w * k / 9, py + rnd.uniform(-h * .06, h * .06)))
-    pts += [(px + w / 2, py), (px + w * .28, py + h * .5), (px + w * .06, py + h), (px - w * .12, py + h * .62), (px - w * .34, py + h * .38)]
-    idr.polygon(pts, fill=c)
-c = (22, 16, 52, 255)
-island(cx, cy + R * .25, R * 1.1, R * .42, c)
-bx = cx                                    # castle towers
-for dx, hh, ww in [(-60, 80, 22), (-25, 140, 26), (10, 190, 30), (45, 120, 24), (78, 70, 20)]:
-    idr.rectangle([bx + dx - ww / 2, cy + R * .25 - hh, bx + dx + ww / 2, cy + R * .25], fill=c)
-    idr.polygon([(bx + dx - ww / 2 - 3, cy + R * .25 - hh), (bx + dx, cy + R * .25 - hh - ww * 1.8), (bx + dx + ww / 2 + 3, cy + R * .25 - hh)], fill=c)
-island(cx - R * .62, cy - R * .12, R * .30, R * .16, (30, 22, 66, 255))
-island(cx + R * .66, cy - R * .30, R * .24, R * .13, (30, 22, 66, 255))
-island(cx + R * .30, cy + R * .62, R * .20, R * .10, (26, 19, 58, 255))
-# clip islands to the portal disc for a "window" feel, keep a few outside as debris
-clip = Image.new('L', (W, H), 0); ImageDraw.Draw(clip).ellipse([cx - R, cy - R, cx + R, cy + R], fill=255)
-a = isl.split()[3]; isl.putalpha(Image.composite(a, Image.new('L', (W, H), 0), clip))
-img = Image.alpha_composite(img, isl)
 
-# ground fog + floating crystals at bottom
-fog = layer(); fd = ImageDraw.Draw(fog)
-for _ in range(60):
-    fx, fy, fr = rnd.randrange(W), rnd.randrange(int(H * .78), H), rnd.randrange(60, 200)
-    fd.ellipse([fx - fr, fy - fr * .3, fx + fr, fy + fr * .3], fill=(150, 110, 210, 22))
-img = Image.alpha_composite(img, fog.filter(ImageFilter.GaussianBlur(26)))
-cr = layer(); cd = ImageDraw.Draw(cr)
-for px, py, s in [(W * .08, H * .84, 46), (W * .86, H * .88, 36), (W * .93, H * .58, 24), (W * .05, H * .30, 22)]:
-    cd.polygon([(px, py - s), (px + s * .45, py - s * .1), (px + s * .3, py + s * .6), (px - s * .3, py + s * .6), (px - s * .45, py - s * .1)], fill=(120, 150, 255, 210))
-    cd.line([(px, py - s), (px, py + s * .6)], fill=(210, 225, 255, 220), width=2)
-img = Image.alpha_composite(img, cr.filter(ImageFilter.GaussianBlur(14)))
-img = Image.alpha_composite(img, cr)
-img.convert('RGB').save(sys.argv[1], optimize=True)
-print('wrote', sys.argv[1], img.size)
+def layer(): return Image.new('RGBA', (W, H), TRANS)
+
+
+def blur(im, r): return im.filter(ImageFilter.GaussianBlur(r))
+
+
+# 2. big soft light blobs
+lay = layer(); d = ImageDraw.Draw(lay)
+for _ in range(14):
+    cx, cy, r = rnd.randrange(W), rnd.randrange(H), rnd.randrange(160, 420)
+    col = rnd.choice([(255, 150, 200), (230, 90, 150), (255, 215, 232), (160, 40, 110)]); d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=col + (rnd.randrange(40, 90),))
+base = Image.alpha_composite(base, blur(lay, 90))
+
+# 3. flowing "hair" strands: long bezier-like curves, mostly top/centre, soft
+lay = layer(); d = ImageDraw.Draw(lay)
+for i in range(70):
+    x0, y0 = rnd.randrange(-200, W), rnd.randrange(-100, H // 2)
+    amp, ph, L = rnd.uniform(80, 260), rnd.uniform(0, 6.28), rnd.randrange(700, 1500)
+    pts = [(x0 + s * 0.55 + math.sin(s / 260 + ph) * amp * 0.5, y0 + s * 0.8 + math.cos(s / 310 + ph) * amp * 0.35) for s in range(0, L, 12)]
+    col = rnd.choice([(255, 190, 220), (255, 130, 185), (250, 235, 245), (190, 60, 120)])
+    d.line(pts, fill=col + (rnd.randrange(25, 70),), width=rnd.randrange(3, 16), joint='curve')
+base = Image.alpha_composite(base, blur(lay, 5))
+base = Image.alpha_composite(base, blur(lay, 22))
+
+
+def petal(size, color, alpha):
+    p = Image.new('RGBA', (size * 2, size * 2), color + (0,)); dd = ImageDraw.Draw(p)
+    dd.ellipse([size * 0.55, size * 0.2, size * 1.45, size * 1.8], fill=color + (alpha,))
+    return p
+
+
+def lily(cx, cy, R, rot):
+    """six-petal lily: pointed petals with a pink throat"""
+    lay_ = layer(); l = Image.new('RGBA', (R * 3, R * 3), (255, 245, 250, 0)); dd = ImageDraw.Draw(l); c = R * 1.5
+    for k in range(6):
+        a = rot + k * math.pi / 3
+        tip = (c + math.cos(a) * R, c + math.sin(a) * R); l1 = (c + math.cos(a - 0.35) * R * 0.45, c + math.sin(a - 0.35) * R * 0.45); l2 = (c + math.cos(a + 0.35) * R * 0.45, c + math.sin(a + 0.35) * R * 0.45)
+        dd.polygon([(c, c), l1, tip, l2], fill=(255, 245, 250, 235))
+        dd.line([(c, c), tip], fill=(255, 170, 205, 200), width=max(2, R // 28))
+    dd.ellipse([c - R * 0.12, c - R * 0.12, c + R * 0.12, c + R * 0.12], fill=(255, 150, 190, 255))
+    l = blur(l, 1.6); lay_.paste(l, (int(cx - c), int(cy - c)), l); return lay_
+
+
+for (cx, cy, R, rot, bl) in [(1500, 330, 260, 0.4, 2), (1180, 560, 150, 1.1, 5), (1720, 760, 190, 0.1, 9), (330, 180, 120, 0.7, 14)]:
+    base = Image.alpha_composite(base, blur(lily(cx, cy, R, rot), bl))
+
+# 4. drifting petals (depth of field: bigger = blurrier)
+for _ in range(70):
+    s = rnd.choice([10, 14, 20, 30, 46, 70]); p = petal(s, rnd.choice([(255, 215, 232), (255, 160, 200), (255, 245, 250)]), rnd.randrange(120, 230))
+    p = p.rotate(rnd.uniform(0, 360), expand=True, fillcolor=None); p = blur(p, s / 14)
+    lay = layer(); px, py = int(rnd.gauss(W * 0.62, W * 0.3)), int(rnd.gauss(H * 0.45, H * 0.32)); lay.paste(p, (px, py), p); base = Image.alpha_composite(base, lay)
+
+# 5. bokeh dots + vignette + grain
+lay = layer(); d = ImageDraw.Draw(lay)
+for _ in range(40):
+    cx, cy, r = rnd.randrange(W), rnd.randrange(H), rnd.randrange(8, 38); d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(255, 235, 245, rnd.randrange(25, 70)))
+base = Image.alpha_composite(base, blur(lay, 3))
+a = np.asarray(base.convert('RGB')).astype(np.float32)
+vy, vx = np.mgrid[0:H, 0:W].astype(np.float32); v = 1 - 0.55 * np.clip(((vx / W - 0.55) ** 2 + (vy / H - 0.45) ** 2) * 1.9, 0, 1)
+a = a * v[..., None] + np.random.default_rng(3).normal(0, 2.2, a.shape)
+os.makedirs(os.path.dirname(OUT), exist_ok=True)
+Image.fromarray(np.clip(a, 0, 255).astype(np.uint8)).save(OUT, optimize=True)
+print('wrote', OUT, os.path.getsize(OUT) // 1024, 'KiB')

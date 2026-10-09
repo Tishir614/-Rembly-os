@@ -23,8 +23,8 @@ def human(n):
         n /= 1024
 
 
-COLORS = [((0.40, 0.55, 1.0), (0.55, 0.85, 1.0)), ((1.0, 0.62, 0.30), (1.0, 0.85, 0.40)), ((0.75, 0.40, 1.0), (1.0, 0.50, 0.80)),
-          ((0.25, 0.80, 0.60), (0.55, 1.0, 0.75)), ((1.0, 0.40, 0.50), (1.0, 0.65, 0.55))]
+COLORS = [((1.0, 0.62, 0.78), (1.0, 0.82, 0.88)), ((0.95, 0.52, 0.60), (1.0, 0.76, 0.70)), ((0.80, 0.50, 0.78), (0.97, 0.70, 0.88)),
+          ((0.70, 0.60, 0.85), (0.90, 0.78, 0.95)), ((0.90, 0.40, 0.55), (1.0, 0.65, 0.75))]
 
 
 class Storage(Gtk.Window):
@@ -33,7 +33,7 @@ class Storage(Gtk.Window):
         v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12); v.set_border_width(18); self.add(v)
         top = ui.card(); v.pack_start(top, False, False, 0)
         self.head = Gtk.Label(xalign=0); self.head.get_style_context().add_class('rcard-big'); top.pack_start(self.head, False, False, 0)
-        self.total = ui.Meter('Всего занято', (0.55, 0.42, 1.0), (1.0, 0.45, 0.60), 'Σ'); top.pack_start(self.total, False, False, 0)
+        self.total = ui.Meter('Всего занято', (1.0, 0.62, 0.80), (0.84, 0.39, 0.60), 'Σ'); top.pack_start(self.total, False, False, 0)
         grid = Gtk.Grid(row_spacing=12, column_spacing=12, column_homogeneous=True); v.pack_start(grid, False, False, 0)
         self.rows = {}
         for i, (name, _) in enumerate(CATS):

@@ -8,7 +8,7 @@ from PIL import Image, ImageDraw, ImageFilter
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, 'rootfs/overlay/usr/share/themes/Rembley/xfwm4')
 os.makedirs(OUT, exist_ok=True)
-TH, BW, W, H, R = 58, 12, 400, 300, 16
+TH, BW, W, H, R = 34, 3, 400, 300, 6
 S = 4                                                       # supersampling for smooth corners
 
 
@@ -16,8 +16,8 @@ def lerp(a, b, t): return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
 
 
 PAL = {
-    'active':   dict(t0=(150, 105, 245), t1=(78, 46, 168), b0=(66, 40, 150), b1=(44, 26, 104), line=(236, 160, 255), glow=(255, 122, 198)),
-    'inactive': dict(t0=(58, 46, 100), t1=(40, 31, 74), b0=(36, 28, 68), b1=(28, 22, 54), line=(96, 84, 150), glow=(80, 70, 130)),
+    'active':   dict(t0=(104, 54, 88), t1=(62, 34, 54), b0=(238, 160, 196), b1=(150, 84, 122), line=(255, 214, 230), glow=(255, 150, 196)),
+    'inactive': dict(t0=(62, 46, 58), t1=(44, 32, 42), b0=(112, 84, 104), b1=(70, 52, 66), line=(140, 112, 130), glow=(100, 80, 96)),
 }
 
 
@@ -29,13 +29,12 @@ def frame(state):
             X, Y = x / S, y / S; col = None
             if Y < TH:
                 col = lerp(p['t0'], p['t1'], Y / TH)
-                if Y < 2.5: col = lerp(p['line'], col, Y / 2.5 * 0.6)
-                if X < 2 or X > W - 2: col = lerp(p['line'], col, 0.4)
+                if Y < 1.6: col = lerp(p['line'], col, Y / 1.6 * 0.5)
+                if X < 1.6 or X > W - 1.6: col = lerp(p['line'], col, 0.5)
             elif X < BW or X >= W - BW or Y >= H - BW:
                 d = min(X, W - 1 - X, H - 1 - Y)                    # distance from the outer edge
                 col = lerp(p['b0'], p['b1'], min(1, d / BW))
-                if d < 2: col = lerp(p['line'], col, d / 2 * 0.7)
-                if Y >= H - 3: col = lerp(p['glow'], col, (H - Y) / 3 * 0.55 + 0.1) if state == 'active' else col   # pink glow along the bottom edge
+                if d < 1.4: col = lerp(p['line'], col, d / 1.4 * 0.6)
             if col: px[x, y] = col + (255,)
     mask = Image.new('L', (w, h), 0); d = ImageDraw.Draw(mask)
     d.rounded_rectangle([0, 0, w - 1, h - 1], radius=R * S, fill=255)
@@ -53,12 +52,12 @@ for st in ('active', 'inactive'):
     crop(f, (0, 0, 16, TH), 'top-left-' + st); crop(f, (W - 16, 0, W, TH), 'top-right-' + st)
     crop(f, (0, 120, BW, 168), 'left-' + st); crop(f, (W - BW, 120, W, 168), 'right-' + st)
     crop(f, (120, H - BW, 168, H), 'bottom-' + st)
-    crop(f, (0, H - 32, 32, H), 'bottom-left-' + st); crop(f, (W - 32, H - 32, W, H), 'bottom-right-' + st)
+    crop(f, (0, H - 12, 12, H), 'bottom-left-' + st); crop(f, (W - 12, H - 12, W, H), 'bottom-right-' + st)
 
 # ---- buttons: coloured discs with a glyph ----
-BW_, BH_ = 44, 58
-COL = {'close': ((255, 120, 150), (255, 79, 154)), 'maximize': ((90, 224, 196), (60, 170, 220)), 'hide': ((255, 214, 100), (255, 160, 80)),
-       'menu': ((190, 160, 255), (140, 110, 235)), 'shade': ((190, 160, 255), (140, 110, 235)), 'stick': ((255, 160, 220), (200, 120, 255))}
+BW_, BH_ = 40, 34
+COL = {'close': ((255, 140, 170), (226, 84, 134)), 'maximize': ((255, 196, 220), (232, 140, 180)), 'hide': ((236, 190, 210), (190, 130, 164)),
+       'menu': ((255, 214, 230), (214, 150, 184)), 'shade': ((236, 190, 210), (190, 130, 164)), 'stick': ((255, 196, 220), (214, 120, 170))}
 
 
 def glyph(d, kind, toggled, cx, cy, c, k=4):
@@ -75,7 +74,7 @@ def glyph(d, kind, toggled, cx, cy, c, k=4):
 
 def button(kind, state, toggled=False):
     s = 4; im = Image.new('RGBA', (BW_ * s, BH_ * s), (0, 0, 0, 0)); d = ImageDraw.Draw(im)
-    cx, cy, r = BW_ * s // 2, BH_ * s // 2 + 1 * s, 15 * s
+    cx, cy, r = BW_ * s // 2, BH_ * s // 2, 9 * s
     c0, c1 = COL[kind]
     if state in ('inactive',): c0, c1 = (92, 80, 140), (70, 60, 112)
     if state == 'prelight': c0, c1 = lerp(c0, (255, 255, 255), .30), lerp(c1, (255, 255, 255), .25)
@@ -97,13 +96,13 @@ for kind in ('close', 'maximize', 'hide', 'menu', 'shade', 'stick'):
         for st in ('active', 'inactive', 'prelight', 'pressed'):
             button(kind, st, tg).save(os.path.join(OUT, '%s%s-%s.png' % (kind, '-toggled' if tg else '', st)))
 
-open(os.path.join(OUT, 'themerc'), 'w').write('''active_text_color=#ffffff
-active_text_shadow_color=#2a1a5e
-inactive_text_color=#b8aee3
-inactive_text_shadow_color=#1c1438
-button_offset=6
-button_spacing=2
-frame_border_top=9
+open(os.path.join(OUT, 'themerc'), 'w').write('''active_text_color=#ffe3ee
+active_text_shadow_color=#3a1a2e
+inactive_text_color=#b99aa9
+inactive_text_shadow_color=#241520
+button_offset=4
+button_spacing=0
+frame_border_top=2
 full_width_title=true
 maximized_offset=0
 show_app_icon=true
@@ -115,7 +114,7 @@ shadow_opacity=30
 title_horizontal_offset=8
 title_shadow_active=frame
 title_shadow_inactive=false
-title_vertical_offset_active=2
-title_vertical_offset_inactive=2
+title_vertical_offset_active=0
+title_vertical_offset_inactive=0
 ''')
 print('wrote', len(os.listdir(OUT)), 'files to', OUT)

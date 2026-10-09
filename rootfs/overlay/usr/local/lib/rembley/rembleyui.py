@@ -18,7 +18,7 @@ import cairo
 DEMO = bool(os.environ.get('REMBLEY_DEMO'))          # fills widgets with sample data (screenshots only)
 CFG = os.path.expanduser('~/.config/rembley'); os.makedirs(CFG, exist_ok=True)
 SHARE = os.environ.get('REMBLEY_SHARE', '/usr/share/rembley')
-BAR = 68
+BAR = 40
 USER = os.environ.get('REMBLEY_USER') or (open(CFG + '/user').read().strip() if os.path.exists(CFG + '/user') else 'Rembley')
 
 RU_DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
@@ -28,21 +28,21 @@ CSS = b"""
 window.rl-win { background-color: transparent; background-image: none; }
 label { color: #ece6ff; }
 .rl-title { font-weight: 600; font-size: 15px; color: #f3eeff; }
-.clock { font-size: 66px; font-weight: 300; color: #f6f1ff; text-shadow: 0 0 20px rgba(165,135,255,0.95); }
-.date { font-size: 17px; color: #e4dcff; text-shadow: 0 0 8px rgba(120,90,220,0.9); }
-.small { font-size: 12px; color: #cfc6ee; }
-.name { font-size: 16px; font-weight: 600; color: #fff; }
-.online { font-size: 12px; color: #b9aee6; }
-.temp { font-size: 30px; color: #fff; }
+.clock { font-size: 66px; font-weight: 300; color: #f6f1ff; text-shadow: 0 0 20px rgba(255,141,188,0.95); }
+.date { font-size: 17px; color: #ffddeb; text-shadow: 0 0 8px rgba(220,96,147,0.9); }
+.small { font-size: 12px; color: #eec8d7; }
+.name { font-size: 16px; font-weight: 600; color: #ffffff; }
+.online { font-size: 12px; color: #e6b0c7; }
+.temp { font-size: 30px; color: #ffffff; }
 .side-item { padding: 0 12px; border-radius: 14px; min-height: 42px; background-image: none; background-color: transparent;
              border: none; box-shadow: none; color: #ece6ff; font-size: 15px; }
-.side-item:hover, .side-item:active, .side-item.active { background-image: linear-gradient(90deg, rgba(196,120,196,0.60), rgba(120,92,205,0.38)); }
+.side-item:hover, .side-item:active, .side-item.active { background-image: linear-gradient(90deg, rgba(196,123,147,0.60), rgba(205,97,142,0.38)); }
 .tile { background-image: none; background-color: transparent; border: none; box-shadow: none; border-radius: 16px; padding: 6px 2px; color: #e9e3ff; font-size: 12px; }
 .tile:hover, .tile:active { background-color: rgba(255,255,255,0.14); }
 .dockbtn { background-image: none; background-color: transparent; border: none; box-shadow: none; border-radius: 16px; padding: 4px; min-width: 44px; min-height: 44px; }
 .dockbtn:hover, .dockbtn:active { background-color: rgba(255,255,255,0.18); }
-.ws { background-image: none; background-color: rgba(255,255,255,0.07); border: 1px solid rgba(190,170,255,0.25); border-radius: 12px; color: #e8e0ff; min-width: 48px; min-height: 40px; padding: 0; font-size: 14px; box-shadow: none; }
-.ws.cur { border: 2px solid #c08cff; background-color: rgba(190,140,255,0.28); }
+.ws { background-image: none; background-color: rgba(255,255,255,0.07); border: 1px solid rgba(255,174,207,0.25); border-radius: 12px; color: #ffe1ed; min-width: 48px; min-height: 40px; padding: 0; font-size: 14px; box-shadow: none; }
+.ws.cur { border: 2px solid #ff91bc; background-color: rgba(255,145,188,0.28); }
 .tray { color: #f0eaff; font-size: 14px; }
 .note-box { background-color: #fdeea6; border-radius: 6px; }
 .note-box textview, .note-box textview text { background-color: #fdeea6; color: #3a3320; font-size: 14px; }
@@ -52,58 +52,68 @@ label { color: #ece6ff; }
 .fab:active { background-color: rgba(255,255,255,0.18); }
 .mbtn { background-image: none; background-color: transparent; border: none; box-shadow: none; padding: 2px 10px; min-height: 40px; }
 .mbtn:active { background-color: rgba(255,255,255,0.18); border-radius: 14px; }
-.pad { background-image: none; background-color: rgba(255,255,255,0.10); border: 1px solid rgba(200,180,255,0.30); border-radius: 36px;
+.pad { background-image: none; background-color: rgba(255,255,255,0.10); border: 1px solid rgba(255,183,213,0.30); border-radius: 36px;
        min-width: 72px; min-height: 72px; padding: 0; color: #f6f1ff; font-size: 28px; font-weight: 300; box-shadow: none; }
-.pad:active { background-color: rgba(190,140,255,0.45); border-color: rgba(230,200,255,0.8); }
-.pad-ok { background-color: rgba(170,110,255,0.40); border-color: rgba(220,190,255,0.7); }
+.pad:active { background-color: rgba(255,145,188,0.45); border-color: rgba(255,202,222,0.8); }
+.pad-ok { background-color: rgba(255,117,171,0.40); border-color: rgba(255,193,217,0.7); }
 .pad-small { font-size: 22px; }
-.lockclock { font-size: 84px; font-weight: 200; color: #fbf8ff; text-shadow: 0 0 30px rgba(170,140,255,0.9); }
-.lockhello { font-size: 20px; color: #efe8ff; text-shadow: 0 0 10px rgba(120,90,220,0.9); }
-.lockhint { font-size: 15px; color: #cfc6ee; }
-.lockbtn { background-image: linear-gradient(90deg, rgba(196,120,196,0.75), rgba(120,92,205,0.65)); border: none; border-radius: 30px; color: #fff; font-size: 20px; min-height: 60px; padding: 0 40px; box-shadow: 0 0 22px rgba(160,110,255,0.55); }
-.rapp { background-image: linear-gradient(160deg, #181038, #2a1a5e 55%, #3c206f); color: #f1ecff; }
+.lockclock { font-size: 84px; font-weight: 200; color: #fbf8ff; text-shadow: 0 0 30px rgba(255,145,190,0.9); }
+.lockhello { font-size: 20px; color: #efe8ff; text-shadow: 0 0 10px rgba(220,96,147,0.9); }
+.lockhint { font-size: 15px; color: #eec8d7; }
+.lockbtn { background-image: linear-gradient(90deg, rgba(196,123,147,0.75), rgba(205,97,142,0.65)); border: none; border-radius: 30px; color: #ffffff; font-size: 20px; min-height: 60px; padding: 0 40px; box-shadow: 0 0 22px rgba(255,117,172,0.55); }
+.rapp { background-image: linear-gradient(160deg, #1f1119, #2f1828 55%, #46223c); color: #f6e6ee; }
 .rapp label { color: #f1ecff; }
-.rapp label.small, .rapp .dim { color: #bfb4e8; }
-.rcard { background-image: linear-gradient(160deg, rgba(255,255,255,0.12), rgba(255,255,255,0.05)); border: 1px solid rgba(200,180,255,0.28); border-radius: 20px; padding: 14px; }
-.rcard-title { font-size: 17px; font-weight: 600; color: #fff; }
-.rcard-big { font-size: 30px; font-weight: 300; color: #fff; text-shadow: 0 0 14px rgba(170,140,255,0.8); }
-.rapp button { background-image: linear-gradient(90deg, rgba(160,105,235,0.80), rgba(105,90,225,0.72)); border: none; border-radius: 16px; color: #fff; min-height: 44px; text-shadow: none; box-shadow: 0 3px 12px rgba(0,0,0,0.30); padding: 0 18px; font-weight: 500; }
-.rapp button:hover { background-image: linear-gradient(90deg, rgba(185,130,255,0.92), rgba(125,110,245,0.85)); }
-.rapp button:active { background-image: linear-gradient(90deg, rgba(220,150,255,1), rgba(150,130,255,1)); }
+.rapp label.small, .rapp .dim { color: #e8b6cb; }
+.rcard { background-image: linear-gradient(160deg, rgba(255,255,255,0.12), rgba(255,255,255,0.05)); border: 1px solid rgba(255,183,213,0.28); border-radius: 20px; padding: 14px; }
+.rcard-title { font-size: 17px; font-weight: 600; color: #ffffff; }
+.rcard-big { font-size: 30px; font-weight: 300; color: #ffffff; text-shadow: 0 0 14px rgba(255,145,190,0.8); }
+.rapp button { background-image: linear-gradient(90deg, rgba(235,111,160,0.80), rgba(225,96,151,0.72)); border: none; border-radius: 16px; color: #ffffff; min-height: 44px; text-shadow: none; box-shadow: 0 3px 12px rgba(0,0,0,0.30); padding: 0 18px; font-weight: 500; }
+.rapp button:hover { background-image: linear-gradient(90deg, rgba(255,136,182,0.92), rgba(245,116,171,0.85)); }
+.rapp button:active { background-image: linear-gradient(90deg, rgba(255,155,191,1), rgba(255,136,186,1)); }
 .rapp button:disabled { opacity: 0.45; }
-.rapp button.btn-danger { background-image: linear-gradient(90deg, rgba(255,110,150,0.92), rgba(220,70,140,0.88)); font-size: 18px; }
+.rapp button.btn-danger { background-image: linear-gradient(90deg, rgba(255,110,149,0.92), rgba(220,70,140,0.88)); font-size: 18px; }
 .rapp button.btn-neutral { background-image: none; background-color: rgba(255,255,255,0.12); box-shadow: none; }
 .rapp button.btn-main { font-size: 18px; }
 
 .rapp button.flat, .rapp .titlebutton { background-image: none; box-shadow: none; }
 .rapp progressbar trough { background-color: rgba(255,255,255,0.12); border: none; border-radius: 10px; min-height: 14px; }
-.rapp progressbar progress { background-image: linear-gradient(90deg, #8d6bff, #ff7ac6); border: none; border-radius: 10px; min-height: 14px; }
-.rapp progressbar text { color: #fff; font-size: 12px; }
+.rapp progressbar progress { background-image: linear-gradient(90deg, #ff72ac, #ff7ac5); border: none; border-radius: 10px; min-height: 14px; }
+.rapp progressbar text { color: #ffffff; font-size: 12px; }
 .rapp treeview, .rapp treeview.view { background-color: transparent; color: #f1ecff; }
-.rapp treeview.view:selected { background-image: linear-gradient(90deg, rgba(196,120,196,0.60), rgba(120,92,205,0.55)); color: #fff; }
+.rapp treeview.view:selected { background-image: linear-gradient(90deg, rgba(196,123,147,0.60), rgba(205,97,142,0.55)); color: #ffffff; }
 .rapp treeview header button { background-image: none; background-color: rgba(255,255,255,0.08); border-radius: 0; box-shadow: none; min-height: 38px; font-weight: 600; }
-.rapp textview, .rapp textview text { background-color: rgba(10,6,30,0.45); color: #eae4ff; border-radius: 14px; }
+.rapp textview, .rapp textview text { background-color: rgba(30,7,16,0.45); color: #eae4ff; border-radius: 14px; }
 .rapp scrolledwindow { border-radius: 16px; }
-.rapp entry { background-color: rgba(255,255,255,0.10); color: #fff; border: 1px solid rgba(190,170,255,0.35); border-radius: 14px; min-height: 40px; }
-.rapp stacksidebar { background-color: rgba(10,6,30,0.35); }
+.rapp entry { background-color: rgba(255,255,255,0.10); color: #ffffff; border: 1px solid rgba(255,174,207,0.35); border-radius: 14px; min-height: 40px; }
+.rapp stacksidebar { background-color: rgba(30,7,16,0.35); }
 .rapp stacksidebar row { min-height: 52px; padding: 0 14px; border-radius: 14px; margin: 2px 8px; }
-.rapp stacksidebar row:selected { background-image: linear-gradient(90deg, rgba(196,120,196,0.65), rgba(120,92,205,0.50)); }
+.rapp stacksidebar row:selected { background-image: linear-gradient(90deg, rgba(196,123,147,0.65), rgba(205,97,142,0.50)); }
 .rapp stack { background-color: transparent; }
 .rapp scale trough { background-color: rgba(255,255,255,0.15); border-radius: 8px; min-height: 8px; }
-.rapp scale highlight { background-image: linear-gradient(90deg, #8d6bff, #ff7ac6); border-radius: 8px; }
-.rapp scale slider { background-color: #fff; border-radius: 12px; min-width: 24px; min-height: 24px; }
-.rapp list, .rapp listbox, .rapp viewport, .rapp .frame { background-color: rgba(10,6,30,0.30); border-radius: 16px; border-color: transparent; }
+.rapp scale highlight { background-image: linear-gradient(90deg, #ff72ac, #ff7ac5); border-radius: 8px; }
+.rapp scale slider { background-color: #ffffff; border-radius: 12px; min-width: 24px; min-height: 24px; }
+.rapp list, .rapp listbox, .rapp viewport, .rapp .frame { background-color: rgba(30,7,16,0.30); border-radius: 16px; border-color: transparent; }
 .rapp list row, .rapp listbox row { border-radius: 12px; min-height: 48px; margin: 3px 6px; padding: 2px 10px; background-color: rgba(255,255,255,0.06); }
-.rapp list row:selected, .rapp listbox row:selected { background-image: linear-gradient(90deg, rgba(196,120,196,0.60), rgba(120,92,205,0.55)); }
-.rapp notebook > header { background-color: rgba(10,6,30,0.35); border: none; }
-.rapp notebook > header > tabs > tab { padding: 10px 22px; border-radius: 12px 12px 0 0; color: #cfc6ee; }
-.rapp notebook > header > tabs > tab:checked { background-image: linear-gradient(180deg, rgba(160,105,235,0.0), rgba(160,105,235,0.45)); color: #fff; box-shadow: inset 0 -3px 0 #c08cff; }
+.rapp list row:selected, .rapp listbox row:selected { background-image: linear-gradient(90deg, rgba(196,123,147,0.60), rgba(205,97,142,0.55)); }
+.rapp notebook > header { background-color: rgba(30,7,16,0.35); border: none; }
+.rapp notebook > header > tabs > tab { padding: 10px 22px; border-radius: 12px 12px 0 0; color: #eec8d7; }
+.rapp notebook > header > tabs > tab:checked { background-image: linear-gradient(180deg, rgba(235,111,160,0.0), rgba(235,111,160,0.45)); color: #ffffff; box-shadow: inset 0 -3px 0 #ff91bc; }
 .rapp switch { background-color: rgba(255,255,255,0.18); border-radius: 16px; border: none; }
-.rapp switch:checked { background-image: linear-gradient(90deg, #8d6bff, #ff7ac6); }
-.rapp switch slider { background-color: #fff; border-radius: 14px; border: none; }
+.rapp switch:checked { background-image: linear-gradient(90deg, #ff72ac, #ff7ac5); }
+.rapp switch slider { background-color: #ffffff; border-radius: 14px; border: none; }
 .rapp combobox button, .rapp spinbutton button { min-height: 38px; }
 .rapp checkbutton label { padding-left: 4px; }
-entry.rl-search { background-color: rgba(255,255,255,0.12); color: #fff; border-radius: 14px; border: 1px solid rgba(190,170,255,0.3); min-height: 38px; }
+entry.rl-search { background-color: rgba(255,255,255,0.12); color: #ffffff; border-radius: 14px; border: 1px solid rgba(255,174,207,0.3); min-height: 38px; }
+
+.bar-lbl { font-family: 'Fira Code', 'DejaVu Sans Mono', monospace; font-size: 12px; color: #f4dbe6; }
+.bar-btn { background-image: none; background-color: transparent; border: none; box-shadow: none; border-radius: 5px; padding: 0 5px; min-height: 24px; min-width: 22px; color: #f4dbe6; font-family: 'Fira Code', 'DejaVu Sans Mono', monospace; font-size: 12px; }
+.bar-btn:hover, .bar-btn:active { background-color: rgba(255,170,205,0.22); }
+.wsdot { background-image: none; background-color: transparent; border: none; box-shadow: none; padding: 0 3px; min-width: 16px; min-height: 24px; color: #e9bfd0; font-size: 13px; }
+.wsdot.cur { color: #ffd2e4; text-shadow: 0 0 8px rgba(255,150,200,0.95); }
+.mono { font-family: 'Fira Code', 'DejaVu Sans Mono', monospace; }
+.ff-title { font-family: 'Fira Code', 'DejaVu Sans Mono', monospace; font-size: 13px; font-weight: 600; color: #d77b9c; }
+.ff-line { font-family: 'Fira Code', 'DejaVu Sans Mono', monospace; font-size: 12px; color: #d9c4cf; }
+.ff-sep { font-family: 'Fira Code', 'DejaVu Sans Mono', monospace; font-size: 10px; color: #8d6f80; }
 """
 
 def load_wallpaper(w, h):
@@ -138,7 +148,7 @@ def rrect(cr, x, y, w, h, r):
 class Glass(Gtk.Box):
     """Rounded translucent panel painted from the blurred wallpaper. Content lives in self.inner,
     so padding is done with margins (border_width would shift the draw origin)."""
-    def __init__(self, radius=22, tint=(0.08, 0.06, 0.17, 0.58), orientation=Gtk.Orientation.HORIZONTAL, spacing=0, **kw):
+    def __init__(self, radius=7, tint=(0.17, 0.10, 0.15, 0.74), orientation=Gtk.Orientation.HORIZONTAL, spacing=0, **kw):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, **kw)
         self.radius, self.tint = radius, tint
         self.set_has_window(False)
@@ -164,8 +174,8 @@ class Glass(Gtk.Box):
         sheen = cairo.LinearGradient(0, 0, 0, min(h, 220)); sheen.add_color_stop_rgba(0, 1, 1, 1, 0.10); sheen.add_color_stop_rgba(1, 1, 1, 1, 0)   # light falling on glass
         cr.set_source(sheen); cr.paint(); cr.restore()
         rrect(cr, 0.75, 0.75, w - 1.5, h - 1.5, self.radius)
-        edge = cairo.LinearGradient(0, 0, w, h); edge.add_color_stop_rgba(0, 0.86, 0.80, 1.0, 0.62); edge.add_color_stop_rgba(0.5, 0.72, 0.66, 1.0, 0.28); edge.add_color_stop_rgba(1, 0.80, 0.62, 1.0, 0.42)
-        cr.set_source(edge); cr.set_line_width(1.3); cr.stroke()
+        edge = cairo.LinearGradient(0, 0, w, h); edge.add_color_stop_rgba(0, 1.0, 0.86, 0.92, 0.95); edge.add_color_stop_rgba(0.5, 0.93, 0.74, 0.84, 0.80); edge.add_color_stop_rgba(1, 1.0, 0.82, 0.90, 0.92)
+        cr.set_source(edge); cr.set_line_width(1.8); cr.stroke()                  # thin light-pink frame, like a tiled window
         return Gtk.Box.do_draw(self, cr)
 
 
@@ -382,7 +392,7 @@ class Avatar(Gtk.DrawingArea):
     def do_draw(self, cr):
         w, h = self.get_allocated_width(), self.get_allocated_height(); r = min(w, h) / 2 - 2
         if self.pb is not None:
-            cr.set_source_rgba(0.72, 0.62, 1.0, 0.55); cr.arc(w / 2, h / 2, r + 1, 0, 2 * math.pi); cr.set_line_width(1.6); cr.stroke()
+            cr.set_source_rgba(1.0, 0.76, 0.88, 0.75); cr.arc(w / 2, h / 2, r + 1, 0, 2 * math.pi); cr.set_line_width(1.6); cr.stroke()
             Gdk.cairo_set_source_pixbuf(cr, self.pb, (w - self.pb.get_width()) / 2, (h - self.pb.get_height()) / 2); cr.paint(); return
         cx, cy = w / 2, h / 2 + 3
         g = cairo.LinearGradient(0, 0, w, h); g.add_color_stop_rgb(0, .85, .8, 1); g.add_color_stop_rgb(1, .55, .5, .9)
@@ -443,7 +453,7 @@ def card(title=None, spacing=8):
 
 class Meter(Gtk.DrawingArea):
     """Coloured bar with an icon dot, a title and a value: one per storage category / memory / load."""
-    def __init__(self, title, c1=(0.55, 0.42, 1.0), c2=(1.0, 0.48, 0.78), emoji=''):
+    def __init__(self, title, c1=(1.0, 0.62, 0.80), c2=(0.84, 0.39, 0.60), emoji=''):
         super().__init__(); self.title, self.val, self.frac, self.c1, self.c2, self.emoji = title, '…', 0.0, c1, c2, emoji
         self.set_size_request(-1, 64)
 

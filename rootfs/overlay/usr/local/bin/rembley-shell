@@ -50,7 +50,55 @@ def avail_apps():
     return [a for a in APPS if DEMO or have(a[2])]
 
 
+class SquareAvatar(Gtk.DrawingArea):
+    """Framed square picture, like the fetch window of the reference."""
+    def __init__(self, size):
+        super().__init__(); self.size = size; self.set_size_request(size, size)
+        self.pb = None
+        for p in (CFG + '/avatar-sakura.png', SHARE + '/avatar-sakura.png', CFG + '/avatar.png', SHARE + '/avatar.png'):
+            try: self.pb = GdkPixbuf.Pixbuf.new_from_file_at_size(p, size - 6, size - 6); break
+            except Exception: continue
+
+    def do_draw(self, cr):
+        s = self.size
+        if self.pb is not None: Gdk.cairo_set_source_pixbuf(cr, self.pb, 3, 3); cr.paint()
+        cr.set_source_rgba(1.0, 0.82, 0.90, 0.95); cr.set_line_width(2); cr.rectangle(1, 1, s - 2, s - 2); cr.stroke()
+
+
+class Visualizer(Gtk.DrawingArea):
+    """cava-style bars. They move only while sound is really playing (ALSA says RUNNING); otherwise they rest, which costs no CPU."""
+    N = 26
+    REST = [.30, .22, .45, .28, .55, .40, .72, .50, .36, .86, .48, .32, .38, .62, .44, .30, .90, .52, .34, .58, .42, .26, .33, .21, .47, .29]
+
+    def __init__(self):
+        super().__init__(); self.set_size_request(200, 120); self.v = list(self.REST); self.playing = False; self.obscured = False
+        GLib.timeout_add(1000, self.poll)
+
+    def poll(self):
+        try:
+            on = any('RUNNING' in open(f).read() for f in glob.glob('/proc/asound/card*/pcm*p/sub*/status'))
+        except Exception: on = False
+        if DEMO: on = False
+        if on and not self.playing and not self.obscured: GLib.timeout_add(90, self.tick)
+        if not on and self.playing: self.v = list(self.REST); self.queue_draw()
+        self.playing = on; return True
+
+    def tick(self):
+        if not self.playing or system_busy(): return False
+        for i in range(self.N):
+            tgt = random.random() ** 1.4
+            self.v[i] = max(tgt, self.v[i] * 0.82) if tgt > self.v[i] else self.v[i] * 0.86
+        self.queue_draw(); return True
+
+    def do_draw(self, cr):
+        w, h = self.get_allocated_width(), self.get_allocated_height(); gap = 6; bw = (w - gap * (self.N - 1)) / self.N
+        for i, v in enumerate(self.v):
+            bh = max(3, v * (h - 6)); x = i * (bw + gap)
+            cr.set_source_rgba(0.99, 0.82, 0.88, 0.95); cr.rectangle(x, h - bh, bw, bh); cr.fill()
+
+
 class Home(Win):
+    """Desktop: the wallpaper with three tiled "windows" - fetch card, audio bars, apps - and the bar on top (see Bar)."""
     def __init__(self, sw, sh_, wall, blur):
         super().__init__(wall, blur, (0, 0), type=Gtk.WindowType.TOPLEVEL)
         self.sw, self.sh = sw, sh_
@@ -58,153 +106,20 @@ class Home(Win):
         self.set_default_size(sw, sh_); self.move(0, 0); self.set_keep_below(True)
         self.fixed = Gtk.Fixed(); self.add(self.fixed)
         self.launcher = None
-        self.build_sidebar(); self.build_apps(); self.build_projects(); self.build_clock()
-        self.build_right()
-        GLib.timeout_add_seconds(1, self.tick); GLib.timeout_add_seconds(3, self.stats)
-        GLib.timeout_add_seconds(3, self.music)
-        self.tick(); self.stats()
-        threading.Thread(target=self.weather_loop, daemon=True).start()
-        self.init_life()
-
-    # ---- liveliness: cheap, adaptive animations (never when busy / obscured / on battery saver) ----
-    def init_life(self):
-        self.mode = motion_mode(); self.obscured = False; self.t0 = time.monotonic(); self.slow = False; self.busy_until = 0
-        self.add_events(Gdk.EventMask.VISIBILITY_NOTIFY_MASK)
-        self.connect('visibility-notify-event', lambda w, e: setattr(self, 'obscured', e.state == Gdk.VisibilityState.FULLY_OBSCURED) or False)
-        rnd = random.Random(42)
-        # twinkling stars sit in the part of the wallpaper that panels leave open (portal area + top strip)
-        self.stars = [(rnd.randrange(600, 970), rnd.randrange(140, 700), rnd.uniform(0, 6.3), rnd.uniform(0.9, 2.2), rnd.choice((4, 5, 6, 8))) for _ in range(14)] + \
-                     [(rnd.randrange(215, 585), rnd.randrange(6, 52), rnd.uniform(0, 6.3), rnd.uniform(0.9, 2.2), rnd.choice((4, 5, 6))) for _ in range(4)]
-        self.meteor = None; self.next_meteor = time.monotonic() + rnd.uniform(12, 25)
-        if self.mode != 'off': GLib.timeout_add(250, self.life_tick)
-        if self.mode == 'full': self.fade_in()
-
-    def alive(self):
-        return self.mode != 'off' and not self.obscured and time.monotonic() > self.busy_until
-
-    def life_tick(self):
-        """~7 fps twinkle (reduced mode ~3 fps); a meteor every 20-40 s at ~16 fps. Invalidates only the tiny rectangles that changed."""
-        t_start = time.monotonic()
-        delay = 140 if (self.mode == 'full' and not self.slow) else 330
-        last = getattr(self, '_last_tick', None); self._last_tick = t_start
-        if last is not None and self.alive():                           # main loop starved? (timer fired much later than asked)
-            lag = (t_start - last) * 1000 - getattr(self, '_prev_delay', 140)
-            self._lag_hits = (getattr(self, '_lag_hits', 0) + 1) if lag > 140 else 0
-            if self._lag_hits >= 4: self.slow = True; delay = 330       # this device cannot afford the fancy part: degrade (no meteors, 3 fps)
-        if self.alive():
-            if t_start - getattr(self, '_busy_chk', 0) > 3:                  # re-evaluate load every 3 s
-                self._busy_chk = t_start
-                if system_busy(): self.busy_until = t_start + 10
-            for (x, y, ph, sp, sz) in self.stars:
-                self.queue_draw_area(x - sz - 2, y - sz - 2, 2 * sz + 4, 2 * sz + 4)
-            if self.mode == 'full' and not self.slow:
-                if self.meteor is None and t_start >= self.next_meteor:
-                    self.meteor = [t_start, random.randrange(640, 960), random.randrange(30, 90)]
-                if self.meteor is not None:
-                    delay = 62
-                    age = t_start - self.meteor[0]
-                    hx, hy = self.meteor[1] - 420 * age / 1.1, self.meteor[2] + 330 * age / 1.1
-                    self.queue_draw_area(int(hx - 50), int(hy - 120), 240, 190)          # only the area around the tail (head + 130 px)
-                    if age > 1.3:
-                        self.meteor = None; self.next_meteor = t_start + random.uniform(20, 40)
-        else:
-            delay = 1000
-        self._prev_delay = delay
-        GLib.timeout_add(delay, self.life_tick)
-        return False
-
-    def paint_extra(self, cr):
-        if self.mode == 'off' or self.obscured: return
-        now = time.monotonic() - self.t0
-        cr.set_line_width(1.2)
-        for (x, y, ph, sp, sz) in self.stars:
-            a = 0.18 + 0.82 * (0.5 + 0.5 * math.sin(now * sp + ph)) ** 2
-            cr.set_source_rgba(0.93, 0.9, 1.0, a)
-            cr.move_to(x - sz, y); cr.line_to(x + sz, y); cr.move_to(x, y - sz); cr.line_to(x, y + sz); cr.stroke()
-            cr.arc(x, y, 1.4, 0, 2 * math.pi); cr.fill()
-        if self.meteor is not None and self.mode == 'full':
-            age = time.monotonic() - self.meteor[0]
-            hx, hy = self.meteor[1] - 420 * age / 1.1, self.meteor[2] + 330 * age / 1.1       # head moves down-left
-            fade = max(0.0, 1 - age / 1.3)
-            g = cairo.LinearGradient(hx, hy, hx + 130, hy - 100)
-            g.add_color_stop_rgba(0, 1, 1, 1, 0.95 * fade); g.add_color_stop_rgba(1, 0.7, 0.6, 1, 0)
-            cr.set_source(g); cr.set_line_width(2.4); cr.move_to(hx, hy); cr.line_to(hx + 130, hy - 100); cr.stroke()
-
-    def fade_in(self):
-        """Panels appear one after another (~0.35 s each) at login; skipped in reduced/off mode."""
-        kids = self.fixed.get_children()
-        for k in kids: k.set_opacity(0)
-        def step(i, n):
-            if i >= len(kids): return False
-            k = kids[i]; v = min(1.0, n / 5)
-            k.set_opacity(v)
-            if v >= 1.0: GLib.timeout_add(60, step, i + 1, 0)
-            else: GLib.timeout_add(55, step, i, n + 1)
-            return False
-        GLib.timeout_add(150, step, 0, 0)
+        fx, fy = sw / 1280.0, (sh_ - BAR) / 760.0
+        self.build_visualizer(int(60 * fx), BAR + int(380 * fy), int(420 * fx), int(330 * fy))
+        self.build_fetch(int(748 * fx), BAR + int(70 * fy), int(470 * fx), int(215 * fy))
+        self.build_apps(int(420 * fx), BAR + int(250 * fy), int(400 * fx), int(300 * fy))
+        GLib.timeout_add_seconds(15, self.refresh_fetch)
 
     def put(self, w, x, y, ww, hh):
         w.set_size_request(ww, hh); self.fixed.put(w, x, y)
 
-    # ---- sidebar ----
-    def build_sidebar(self):
-        box = Glass(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        box.set_border_width(10)
-        head = Gtk.Box(spacing=10); head.pack_start(Avatar(), False, False, 0)
-        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL); col.set_valign(Gtk.Align.CENTER)
-        n = Gtk.Label(label=USER, xalign=0); n.get_style_context().add_class('name')
-        o = Gtk.Label(label='В сети', xalign=0); o.get_style_context().add_class('online')
-        col.pack_start(n, False, False, 0); col.pack_start(o, False, False, 0); head.pack_start(col, True, True, 0)
-        box.pack_start(head, False, False, 6)
-        items = [('Главная', 'go-home', self.show_home), ('Приложения', ['view-app-grid', 'view-grid', 'applications-other'], lambda: self.open_launcher(None)),
-                 ('Файлы', ['system-file-manager', 'folder'], lambda: sh('thunar')), ('Терминал', 'utilities-terminal', lambda: sh('xfce4-terminal')),
-                 ('Интернет', ['web-browser', 'internet-web-browser'], lambda: sh('netsurf-gtk')),
-                 ('Разработка', 'applications-development', lambda: self.open_launcher('Development')),
-                 ('Графика', 'applications-graphics', lambda: self.open_launcher('Graphics')),
-                 ('Мультимедиа', 'applications-multimedia', lambda: self.open_launcher('AudioVideo')),
-                 ('Игры', 'applications-games', lambda: self.open_launcher('Game')),
-                 ('Система', 'applications-system', lambda: self.open_launcher('System')),
-                 ('Настройки', 'preferences-system', lambda: sh('rembley-settings'))]
-        self.side = []
-        for label, ic, fn in items:
-            b = Gtk.Button(); b.set_relief(Gtk.ReliefStyle.NONE); b.get_style_context().add_class('side-item')
-            row = Gtk.Box(spacing=14); row.pack_start(icon(ic, 24), False, False, 0)
-            row.pack_start(Gtk.Label(label=label, xalign=0), True, True, 0); b.add(row)
-            b.connect('clicked', lambda _b, f=fn: f()); box.pack_start(b, False, False, 0); self.side.append(b)
-        self.side[0].get_style_context().add_class('active')
-        box.pack_end(self.mk_power(), False, False, 0)
-        self.put(box, 8, 8, 178, self.sh - BAR - 16)
-
-    def mk_power(self):
-        b = Gtk.Button(); b.set_relief(Gtk.ReliefStyle.NONE); b.get_style_context().add_class('side-item')
-        row = Gtk.Box(spacing=14); row.pack_start(icon(['system-shutdown', 'gnome-shutdown'], 24), False, False, 0)
-        l = Gtk.Label(label='Выключение', xalign=0); l.set_opacity(.8); row.pack_start(l, True, True, 0); b.add(row)
-        b.connect('clicked', lambda _b: power_dialog(self)); return b
-
-    def show_home(self):
-        sh('wmctrl -k on')
+    def show_home(self): sh('wmctrl -k on')
 
     def open_launcher(self, cat):
-        if self.launcher is None:
-            self.launcher = Launcher(self.sw, self.sh - BAR, self.wall, self.blur)
+        if self.launcher is None: self.launcher = Launcher(self.sw, self.sh - BAR, self.wall, self.blur)
         self.launcher.show_cat(cat)
-
-    # ---- apps grid / projects ----
-    def panel_title(self, box, text, right=None):
-        h = Gtk.Box(); l = Gtk.Label(label=text, xalign=0); l.get_style_context().add_class('rl-title')
-        h.pack_start(l, True, True, 0)
-        if right is not None: h.pack_end(right, False, False, 0)
-        box.pack_start(h, False, False, 4)
-
-    def build_apps(self):
-        box = Glass(orientation=Gtk.Orientation.VERTICAL); box.set_border_width(14)
-        s = Gtk.Button(); s.set_relief(Gtk.ReliefStyle.NONE); s.add(icon(['system-search', 'edit-find'], 20))
-        s.connect('clicked', lambda _b: self.open_launcher(None)); self.panel_title(box, 'Приложения', s)
-        grid = Gtk.Grid(column_homogeneous=True, row_homogeneous=True, row_spacing=2, column_spacing=2)
-        for i, (name, ic, cmd) in enumerate(avail_apps()[:12]):
-            grid.attach(self.tile(name, ic, cmd, 50), i % 4, i // 4, 1, 1)
-        box.pack_start(grid, True, True, 0)
-        self.put(box, 198, 62, 376, 306)
 
     def tile(self, name, ic, cmd, px):
         b = Gtk.Button(); b.set_relief(Gtk.ReliefStyle.NONE); b.get_style_context().add_class('tile')
@@ -212,183 +127,69 @@ class Home(Win):
         l = Gtk.Label(label=name); l.set_ellipsize(Pango.EllipsizeMode.END); l.set_max_width_chars(11); v.pack_start(l, False, False, 0)
         b.add(v); b.connect('clicked', lambda _b: sh(cmd)); return b
 
-    def build_projects(self):
-        self.proj_dir = os.path.expanduser('~/Projects'); os.makedirs(self.proj_dir, exist_ok=True)
-        if not os.listdir(self.proj_dir): os.makedirs(self.proj_dir + '/Первый проект', exist_ok=True)
-        self.pbox = Glass(orientation=Gtk.Orientation.VERTICAL); self.pbox.set_border_width(14)
-        plus = Gtk.Button(label='+'); plus.set_relief(Gtk.ReliefStyle.NONE); plus.connect('clicked', self.new_project)
-        self.panel_title(self.pbox, 'Проекты', plus)
-        self.pgrid = Gtk.Grid(column_homogeneous=True, column_spacing=2)
-        self.pbox.pack_start(self.pgrid, True, True, 0); self.fill_projects()
-        self.put(self.pbox, 198, 394, 376, 140)
+    # ---- window 1: audio bars ----
+    def build_visualizer(self, x, y, w, h):
+        g = Glass(radius=3, tint=(0.20, 0.13, 0.19, 0.70)); g.set_border_width(22)
+        self.viz = Visualizer(); g.pack_start(self.viz, True, True, 0)
+        self.put(g, x, y, w, h)
+        self.add_events(Gdk.EventMask.VISIBILITY_NOTIFY_MASK)
+        self.connect('visibility-notify-event', lambda wd, e: setattr(self.viz, 'obscured', e.state == Gdk.VisibilityState.FULLY_OBSCURED) or False)
 
-    def fill_projects(self):
-        for c in self.pgrid.get_children(): self.pgrid.remove(c)
-        names = sorted(d for d in os.listdir(self.proj_dir) if os.path.isdir(os.path.join(self.proj_dir, d)))[:4]
-        for i, d in enumerate(names):
-            self.pgrid.attach(self.tile(d, ['folder-violet', 'folder'], 'thunar "%s"' % os.path.join(self.proj_dir, d), 46), i, 0, 1, 1)
-        self.pgrid.show_all()
-
-    def new_project(self, *_):
-        n = 1
-        while os.path.exists('%s/Проект %d' % (self.proj_dir, n)): n += 1
-        os.makedirs('%s/Проект %d' % (self.proj_dir, n)); self.fill_projects()
-
-    # ---- clock ----
-    def build_clock(self):
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self.clock = Gtk.Label(); self.clock.get_style_context().add_class('clock')
-        self.date = Gtk.Label(); self.date.get_style_context().add_class('date')
-        self.greet = Gtk.Label(); self.greet.get_style_context().add_class('small')
-        box.pack_start(self.clock, False, False, 0); box.pack_start(self.date, False, False, 0); box.pack_start(self.greet, False, False, 2)
-        cx = (198 + 376 + self.sw - 292) // 2
-        self.put(box, cx - 170, 14, 340, 120)
-
-    def tick(self):
-        t = time.localtime(); hm = '16:42' if DEMO else time.strftime('%H:%M', t)
-        if hm != self.clock.get_text():                           # once a minute, not every second
-            self.clock.set_text(hm)
-            self.date.set_text('Вс, 13 июля 2025' if DEMO else '%s, %d %s %d' % (RU_DAYS[t.tm_wday], t.tm_mday, RU_MON[t.tm_mon - 1], t.tm_year))
-            h = 16 if DEMO else t.tm_hour
-            hi = 'Доброе утро' if 5 <= h < 12 else 'Добрый день' if 12 <= h < 18 else 'Добрый вечер' if 18 <= h < 23 else 'Доброй ночи'
-            self.greet.set_text('%s, %s' % (hi, USER))
-        return True
-
-    # ---- right column ----
-    def build_right(self):
-        x, w = self.sw - 292, 280
-        # weather
-        self.wbox = Glass(); self.wbox.set_border_width(14)
-        left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self.wcity = Gtk.Label(label='Погода', xalign=0); self.wcity.get_style_context().add_class('small')
-        r = Gtk.Box(spacing=12); self.wtemp = Gtk.Label(label='—', xalign=0); self.wtemp.get_style_context().add_class('temp')
-        self.wcond = Gtk.Label(label='нет сети', xalign=0); self.wcond.get_style_context().add_class('small')
-        self.wicon = Gtk.Box(); self.wicon.pack_start(icon(['weather-clear-night', 'weather-clear'], 44), False, False, 0)
-        r.pack_start(self.wicon, False, False, 0)
-        c = Gtk.Box(orientation=Gtk.Orientation.VERTICAL); c.pack_start(self.wtemp, False, False, 0); c.pack_start(self.wcond, False, False, 0)
-        r.pack_start(c, False, False, 0)
-        left.pack_start(self.wcity, False, False, 0); left.pack_start(r, False, False, 0); self.wbox.pack_start(left, True, True, 0)
-        self.put(self.wbox, x, 12, w, 104)
-        # music
-        mb = Glass(orientation=Gtk.Orientation.VERTICAL); mb.set_border_width(14)
-        self.panel_title(mb, 'Сейчас играет')
-        self.mtitle = Gtk.Label(label='Ничего не играет', xalign=0); self.mtitle.set_ellipsize(Pango.EllipsizeMode.END)
-        self.msub = Gtk.Label(label='', xalign=0); self.msub.get_style_context().add_class('small'); self.msub.set_ellipsize(Pango.EllipsizeMode.END)
-        mb.pack_start(self.mtitle, False, False, 0); mb.pack_start(self.msub, False, False, 0)
-        ctl = Gtk.Box(spacing=10, halign=Gtk.Align.CENTER)
-        for ic, cmd in (('media-skip-backward', 'previous'), ('media-playback-start', 'play-pause'), ('media-skip-forward', 'next')):
-            b = Gtk.Button(); b.set_relief(Gtk.ReliefStyle.NONE); b.get_style_context().add_class('mbtn'); b.add(icon(ic, 30))
-            b.connect('clicked', lambda _b, c=cmd: sh('playerctl ' + c)); ctl.pack_start(b, False, False, 0)
-        mb.pack_end(ctl, False, False, 0)
-        self.put(mb, x, 126, w, 150)
-        # system
-        sb = Glass(orientation=Gtk.Orientation.VERTICAL); sb.set_border_width(14)
-        self.panel_title(sb, 'Система')
-        gr = Gtk.Box(spacing=8, homogeneous=True); self.g_cpu, self.g_ram, self.g_disk = Gauge('CPU'), Gauge('RAM'), Gauge('Диск')
-        for g in (self.g_cpu, self.g_ram, self.g_disk): gr.pack_start(g, True, True, 0)
-        sb.pack_start(gr, True, True, 0); self.put(sb, x, 286, w, 150)
-        self._cpu = None
-        # notes
-        nbo = Gtk.Box(); nbo.get_style_context().add_class('note-box'); nb = Gtk.Box(orientation=Gtk.Orientation.VERTICAL); nb.set_border_width(8); nbo.pack_start(nb, True, True, 0)
-        h = Gtk.Box(); t = Gtk.Label(label='Быстрые заметки', xalign=0); t.get_style_context().add_class('note-title')
-        add = Gtk.Button(label='+'); add.get_style_context().add_class('note-btn'); add.set_relief(Gtk.ReliefStyle.NONE)
-        h.pack_start(t, True, True, 0); h.pack_end(add, False, False, 0); nb.pack_start(h, False, False, 0)
-        self.notes = Gtk.TextView(); self.notes.set_wrap_mode(Gtk.WrapMode.WORD)
-        self.nfile = CFG + '/notes.txt'
-        txt = open(self.nfile).read() if os.path.exists(self.nfile) else ('✓ Учиться\n✓ Писать код\n✓ Хорошее настроение!' if DEMO else '')
-        self.notes.get_buffer().set_text(txt)
-        self._nsave = None
-        self.notes.get_buffer().connect('changed', self.note_changed)
-        self.notes.connect('focus-in-event', lambda *_: osk(True)); self.notes.connect('focus-out-event', lambda *_: osk(False))
-        add.connect('clicked', lambda _b: self.notes.get_buffer().insert_at_cursor('\n☐ '))
-        sw = Gtk.ScrolledWindow(); sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC); sw.add(self.notes)
-        nb.pack_start(sw, True, True, 0)
-        self.put(nbo, x, 446, w, 170)
-
-    def note_changed(self, buf):
-        if self._nsave: GLib.source_remove(self._nsave)
-        def save():
-            self._nsave = None
-            s, e = buf.get_bounds()
-            try: open(self.nfile, 'w').write(buf.get_text(s, e, False))
-            except Exception: pass
-            return False
-        self._nsave = GLib.timeout_add_seconds(2, save)
-
-    def stats(self):
+    # ---- window 2: fetch card ----
+    def fetch_lines(self):
+        try: osn = [l.split('=', 1)[1].strip().strip('"') for l in open('/etc/os-release') if l.startswith('PRETTY_NAME=')][0]
+        except Exception: osn = 'Linux'
+        arch = out('dpkg --print-architecture', 2) or 'armhf'
         try:
-            a = [int(x) for x in open('/proc/stat').readline().split()[1:8]]
-            idle, tot = a[3] + a[4], sum(a)
-            if self._cpu: dt, di = tot - self._cpu[0], idle - self._cpu[1]; cpu = 1 - di / dt if dt else 0
-            else: cpu = 0
-            self._cpu = (tot, idle)
             mi = {l.split(':')[0]: int(l.split()[1]) for l in open('/proc/meminfo') if ':' in l}
-            used = (mi['MemTotal'] - mi['MemAvailable']) / 1048576; tt = mi['MemTotal'] / 1048576
-            st = os.statvfs('/'); du, dt_ = (st.f_blocks - st.f_bavail) * st.f_frsize / 2 ** 30, st.f_blocks * st.f_frsize / 2 ** 30
-            if DEMO: cpu, used, tt, du, dt_ = .12, 1.1, 2.0, 3.6, 25
-            self.g_cpu.set(cpu, '%d%%' % (cpu * 100)); self.g_ram.set(used / tt, '%.1f/%.1f ГБ' % (used, tt))
-            self.g_disk.set(du / dt_, '%.1f/%.0f ГБ' % (du, dt_))
-            if not DEMO and mi['MemAvailable'] < 200 * 1024 and time.time() - getattr(self, '_lowmem', 0) > 180:
-                self._lowmem = time.time(); sh('notify-send -u critical "Мало памяти" "Закройте ненужные приложения (кнопка «Окна» в доке), иначе система начнёт тормозить."')
-        except Exception:
-            pass
+            ram = '%d MiB / %d MiB' % ((mi['MemTotal'] - mi['MemAvailable']) // 1024, mi['MemTotal'] // 1024)
+        except Exception: ram = '?'
+        if DEMO: osn, ram = 'Ubuntu 20.04.6 LTS', '1126 MiB / 1843 MiB'
+        if not hasattr(self, '_pk'): self._pk = len(glob.glob('/var/lib/dpkg/info/*.list')) if not DEMO else 587
+        return ['%s %s' % (osn.replace(' LTS', ''), arch), ram, '%d (dpkg)' % self._pk, 'xfce4-terminal', 'Rembley Shell', 'github.com/Tishir614/-Rembly-os']
+
+    def build_fetch(self, x, y, w, h):
+        g = Glass(radius=3, tint=(0.20, 0.13, 0.19, 0.72)); g.set_border_width(18)
+        g.pack_start(SquareAvatar(118), False, False, 0)
+        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2); col.set_margin_start(22); col.set_valign(Gtk.Align.CENTER)
+        t = Gtk.Label(label='R E M B L E Y | O S', xalign=0); t.get_style_context().add_class('ff-title'); col.pack_start(t, False, False, 0)
+        sep = '-' * 24
+        for text, cls in ((sep, 'ff-sep'),):
+            l = Gtk.Label(label=text, xalign=0); l.get_style_context().add_class(cls); col.pack_start(l, False, False, 0)
+        self.ff = []
+        for line in self.fetch_lines():
+            l = Gtk.Label(label=line, xalign=0); l.get_style_context().add_class('ff-line'); l.set_ellipsize(Pango.EllipsizeMode.END); col.pack_start(l, False, False, 0); self.ff.append(l)
+        l = Gtk.Label(label=sep, xalign=0); l.get_style_context().add_class('ff-sep'); col.pack_start(l, False, False, 0)
+        sw_ = Gtk.DrawingArea(); sw_.set_size_request(200, 14)
+        cols = [(.86, .42, .60), (.95, .60, .72), (.98, .78, .85), (.72, .50, .70), (.58, .42, .60), (.96, .88, .90), (.82, .30, .46), (.50, .30, .46)]
+        def draw(wd, cr):
+            for i, c in enumerate(cols): cr.set_source_rgb(*c); cr.rectangle(i * 24, 2, 20, 8); cr.fill()
+        sw_.connect('draw', draw); col.pack_start(sw_, False, False, 2)
+        g.pack_start(col, True, True, 0)
+        self.put(g, x, y, w, h)
+
+    def refresh_fetch(self):
+        if getattr(self, 'ff', None):
+            for l, t in zip(self.ff, self.fetch_lines()): l.set_text(t)
         return True
 
-    def music(self):
-        """Now playing straight from MPRIS over D-Bus (in-process, no playerctl spawn)."""
-        if DEMO: self.set_music('Playing', 'x'); return True
-        try:
-            bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
-            names = bus.call_sync('org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus', 'ListNames', None, None, Gio.DBusCallFlags.NONE, 500, None).unpack()[0]
-            players = [n for n in names if n.startswith('org.mpris.MediaPlayer2.')]
-            if not players: self.set_music('', ''); return True
-            def get(prop):
-                return bus.call_sync(players[0], '/org/mpris/MediaPlayer2', 'org.freedesktop.DBus.Properties', 'Get',
-                                     GLib.Variant('(ss)', ('org.mpris.MediaPlayer2.Player', prop)), None, Gio.DBusCallFlags.NONE, 500, None).unpack()[0]
-            md = get('Metadata'); st = get('PlaybackStatus')
-            title = md.get('xesam:title', ''); artist = md.get('xesam:artist', [''])
-            self.set_music(st, '%s|%s' % (title, artist[0] if isinstance(artist, list) and artist else artist))
-        except Exception:
-            self.set_music('', '')
-        return True
-
-    def set_music(self, st, t):
-        if DEMO: st, t = 'Playing', 'lofi anime radio|chill • study • relax'
-        if st and t:
-            a = t.split('|'); self.mtitle.set_text(a[0] or 'Без названия'); self.msub.set_text(a[1] if len(a) > 1 else '')
-        else:
-            self.mtitle.set_text('Ничего не играет'); self.msub.set_text('')
-
-    def weather_loop(self):
-        city = open(CFG + '/city').read().strip() if os.path.exists(CFG + '/city') else ''
-        while True:
-            try:
-                if DEMO: raise RuntimeError
-                u = 'https://wttr.in/%s?format=%%l|%%t|%%C&lang=ru' % urllib.request.quote(city)
-                d = urllib.request.urlopen(urllib.request.Request(u, headers={'User-Agent': 'curl'}), timeout=15).read().decode().strip().split('|')
-                GLib.idle_add(self.set_weather, d[0].split(',')[0], d[1].replace('+', ''), d[2])
-                time.sleep(1800)
-            except Exception:
-                if DEMO: GLib.idle_add(self.set_weather, 'Турция', '28°C', 'Ясно'); return
-                time.sleep(120)
-
-    def set_weather(self, c, t, cond):
-        self.wcity.set_text(c); self.wtemp.set_text(t); self.wcond.set_text(cond)
-        cl = cond.lower(); night = not (7 <= time.localtime().tm_hour < 20)
-        names = (['weather-storm'] if 'гроз' in cl else ['weather-snow'] if 'снег' in cl else ['weather-showers', 'weather-rain'] if ('дожд' in cl or 'ливн' in cl) else
-                 ['weather-fog'] if ('туман' in cl or 'дымк' in cl) else ['weather-overcast', 'weather-clouds'] if 'пасмурн' in cl else
-                 ['weather-few-clouds-night' if night else 'weather-few-clouds', 'weather-clouds'] if 'облачн' in cl else
-                 ['weather-clear-night' if night else 'weather-clear'])
-        for ch in self.wicon.get_children(): self.wicon.remove(ch)
-        self.wicon.pack_start(icon(names + ['weather-clear'], 44), False, False, 0); self.wicon.show_all()
+    # ---- window 3: apps ----
+    def build_apps(self, x, y, w, h):
+        g = Glass(radius=3, tint=(0.18, 0.11, 0.16, 0.78), orientation=Gtk.Orientation.VERTICAL); g.set_border_width(14)
+        grid = Gtk.Grid(column_homogeneous=True, row_homogeneous=True, row_spacing=2, column_spacing=2)
+        for i, (name, ic, cmd) in enumerate(avail_apps()[:12]): grid.attach(self.tile(name, ic, cmd, 46), i % 4, i // 4, 1, 1)
+        g.pack_start(grid, True, True, 0)
+        more = Gtk.Button(label='все приложения  >'); more.set_relief(Gtk.ReliefStyle.NONE); more.get_style_context().add_class('bar-btn'); more.connect('clicked', lambda _b: self.open_launcher(None))
+        g.pack_end(more, False, False, 0)
+        self.put(g, x, y, w, h)
 
 
 class Launcher(Win):
     def __init__(self, w, h, wall, blur):
-        super().__init__(wall, blur, (0, 0), type=Gtk.WindowType.TOPLEVEL)
-        self.set_decorated(False); self.set_default_size(w, h); self.move(0, 0); self.set_type_hint(Gdk.WindowTypeHint.DIALOG)
+        super().__init__(wall, blur, (0, BAR), type=Gtk.WindowType.TOPLEVEL)
+        self.set_decorated(False); self.set_default_size(w, h); self.move(0, BAR); self.set_type_hint(Gdk.WindowTypeHint.DIALOG)
         self.set_skip_taskbar_hint(True); self.set_keep_above(True)
-        outer = Glass(orientation=Gtk.Orientation.VERTICAL, spacing=8, radius=26, tint=(0.07, 0.05, 0.15, 0.80)); outer.set_border_width(16)
+        outer = Glass(orientation=Gtk.Orientation.VERTICAL, spacing=8, radius=8, tint=(0.14, 0.08, 0.12, 0.84)); outer.set_border_width(16)
         self.add(outer)
         top = Gtk.Box(spacing=10); self.search = Gtk.Entry(); self.search.set_placeholder_text('Поиск приложений')
         self.search.get_style_context().add_class('rl-search'); self.search.connect('changed', lambda *_: self.fill())
@@ -462,11 +263,11 @@ class QuickPanel(Win):
 
     def __init__(self, sw, sh_, wall, blur):
         w, h = 372, 690
-        super().__init__(wall, blur, (sw - w - 16, sh_ - BAR - h - 8), type=Gtk.WindowType.TOPLEVEL)
-        self.set_decorated(False); self.set_default_size(w, h); self.move(sw - w - 16, sh_ - BAR - h - 8)
+        super().__init__(wall, blur, (sw - w - 10, BAR + 4), type=Gtk.WindowType.TOPLEVEL)
+        self.set_decorated(False); self.set_default_size(w, h); self.move(sw - w - 10, BAR + 4)
         self.set_type_hint(Gdk.WindowTypeHint.DIALOG); self.set_skip_taskbar_hint(True); self.set_keep_above(True)
         self.connect('focus-out-event', lambda *_: (self.hide(), False)[1])
-        box = Glass(orientation=Gtk.Orientation.VERTICAL, spacing=8, radius=26, tint=(0.07, 0.05, 0.16, 0.84)); box.set_border_width(16)
+        box = Glass(orientation=Gtk.Orientation.VERTICAL, spacing=8, radius=8, tint=(0.14, 0.08, 0.12, 0.86)); box.set_border_width(16)
         self.add(box)
         t = Gtk.Label(label='Быстрые настройки', xalign=0); t.get_style_context().add_class('rl-title'); box.pack_start(t, False, False, 4)
         self.bl = backlight_path(); self.ac = audio_ctl()
@@ -539,10 +340,10 @@ class Switcher(Win):
         cls.inst.fill(); cls.inst.show_all(); cls.inst.present()
 
     def __init__(self, w, h, wall, blur):
-        super().__init__(wall, blur, (0, 0), type=Gtk.WindowType.TOPLEVEL)
-        self.set_decorated(False); self.set_default_size(w, h); self.move(0, 0); self.set_type_hint(Gdk.WindowTypeHint.DIALOG)
+        super().__init__(wall, blur, (0, BAR), type=Gtk.WindowType.TOPLEVEL)
+        self.set_decorated(False); self.set_default_size(w, h); self.move(0, BAR); self.set_type_hint(Gdk.WindowTypeHint.DIALOG)
         self.set_skip_taskbar_hint(True); self.set_keep_above(True)
-        outer = Glass(orientation=Gtk.Orientation.VERTICAL, spacing=8, radius=26, tint=(0.06, 0.05, 0.14, 0.86)); outer.set_border_width(16)
+        outer = Glass(orientation=Gtk.Orientation.VERTICAL, spacing=8, radius=8, tint=(0.14, 0.08, 0.12, 0.88)); outer.set_border_width(16)
         self.add(outer)
         top = Gtk.Box(); t = Gtk.Label(label='Открытые окна', xalign=0); t.get_style_context().add_class('rl-title')
         close = Gtk.Button(label='✕'); close.set_relief(Gtk.ReliefStyle.NONE); close.connect('clicked', lambda _b: self.hide())
@@ -571,74 +372,87 @@ class Switcher(Win):
 
 
 class Bar(Win):
+    """Top bar in the style of the reference: pills with a thin pink frame - launcher + workspace dots, media, track, CPU, RAM, tray, network, volume, clock."""
+    PH = 30
+
     def __init__(self, sw, sh_, wall, blur):
-        super().__init__(wall, blur, (0, sh_ - BAR), type=Gtk.WindowType.TOPLEVEL)
+        super().__init__(wall, blur, (0, 0), type=Gtk.WindowType.TOPLEVEL)
         self.sw, self.sh = sw, sh_
         self.set_type_hint(Gdk.WindowTypeHint.DOCK); self.set_decorated(False)
-        self.set_default_size(sw, BAR); self.move(0, sh_ - BAR); self.set_keep_above(True)
+        self.set_default_size(sw, BAR); self.move(0, 0); self.set_keep_above(True)
         self.fixed = Gtk.Fixed(); self.add(self.fixed); self.pills = []
-        self.build_ws(); self.build_dock(); self.build_tray()
+        self.net_txt, self.vol_txt, self.track_txt = 'wlan0: нет сети', '--%', 'Rembley OS'
+        x = 8
+        x = self.build_left(x); x = self.build_media(x); self.build_title(x)
+        self.build_right()
         self.connect('realize', self.on_realize)
-        GLib.timeout_add_seconds(1, self.cur_ws); GLib.timeout_add_seconds(5, self.status); self.status(); self.cur_ws()
+        self._cpu = None
+        GLib.timeout_add_seconds(1, self.cur_ws); GLib.timeout_add_seconds(3, self.stats); GLib.timeout_add_seconds(5, self.status); GLib.timeout_add(700, self.lang_tick)
+        self.status(); self.cur_ws(); self.stats()
 
     def pill(self, x, w):
-        g = Glass(radius=26, spacing=4, tint=(0.07, 0.05, 0.16, 0.66)); g.set_border_width(7)
-        g.set_size_request(w, BAR - 12); self.fixed.put(g, x, 4); self.pills.append((x, 4, w, BAR - 12)); return g
+        g = Glass(radius=5, spacing=2, tint=(0.13, 0.08, 0.12, 0.90)); g.set_border_width(2)
+        g.set_size_request(w, self.PH); self.fixed.put(g, x, 5); self.pills.append((x, 5, w, self.PH)); return g
 
-    def build_ws(self):
-        p = self.pill(16, 4 * 58 + 22); self.wsb = []
+    def btn(self, child, cb, cls='bar-btn'):
+        b = Gtk.Button(); b.set_relief(Gtk.ReliefStyle.NONE); b.get_style_context().add_class(cls)
+        b.add(child if not isinstance(child, str) else Gtk.Label(label=child)); b.connect('clicked', lambda _b: cb()); return b
+
+    def label(self, text=''):
+        l = Gtk.Label(label=text); l.get_style_context().add_class('bar-lbl'); return l
+
+    def build_left(self, x):
+        p = self.pill(x, 150)
+        try: logo = Gtk.Image.new_from_pixbuf(GdkPixbuf.Pixbuf.new_from_file_at_size(SHARE + '/logo-small.png', 22, 22))
+        except Exception: logo = Gtk.Label(label='R')
+        p.pack_start(self.btn(logo, lambda: ctl_cmd('launcher')), False, False, 0)
+        self.wsb = []
         for i in range(4):
-            b = Gtk.Button(label=str(i + 1)); b.get_style_context().add_class('ws'); b.connect('clicked', lambda _b, n=i: sh('wmctrl -s %d' % n))
-            p.pack_start(b, False, False, 0); self.wsb.append(b)
+            b = self.btn('•', lambda n=i: sh('wmctrl -s %d' % n), 'wsdot'); p.pack_start(b, False, False, 0); self.wsb.append(b)
+        return x + 150 + 6
 
-    def build_dock(self):
-        items = [('browser', ['web-browser', 'netsurf'], 'netsurf-gtk'), ('files', ['system-file-manager', 'folder'], 'thunar'),
-                 ('term', 'utilities-terminal', 'xfce4-terminal'), ('code', ['geany', 'text-editor'], 'geany'),
-                 ('music', ['audacious', 'multimedia-audio-player'], 'audacious'), ('photo', ['gpicview', 'image-viewer'], 'gpicview'),
-                 ('set', ['preferences-system', 'xfce4-settings-manager'], 'rembley-settings')]
-        w = 12 + 10 * 56 + 8
-        p = self.pill((self.sw - w) // 2 - 44, w)
-        ha = Gtk.Button(); ha.set_relief(Gtk.ReliefStyle.NONE); ha.get_style_context().add_class('dockbtn'); ha.add(Avatar(38))
-        ha.connect('clicked', lambda _b: sh('wmctrl -k on')); p.pack_start(ha, False, False, 0)
-        for _, ic, cmd in items:
-            b = Gtk.Button(); b.set_relief(Gtk.ReliefStyle.NONE); b.get_style_context().add_class('dockbtn'); b.add(appicon(ic, 44))
-            b.connect('clicked', lambda _b, c=cmd: (sh(c), self.bounce(_b))); p.pack_start(b, False, False, 0)
-        wb = Gtk.Button(); wb.set_relief(Gtk.ReliefStyle.NONE); wb.get_style_context().add_class('dockbtn')
-        wb.add(appicon(['preferences-system-windows', 'window-duplicate', 'view-grid'], 44))
-        wb.connect('clicked', lambda _b: Switcher.toggle(self.sw, self.sh - BAR, self.wall, self.blur)); p.pack_start(wb, False, False, 0)
-        kb = Gtk.Button(); kb.set_relief(Gtk.ReliefStyle.NONE); kb.get_style_context().add_class('dockbtn')
-        kb.add(appicon(['input-keyboard', 'keyboard'], 44))
-        kb.connect('clicked', lambda _b: sh('dbus-send --type=method_call --dest=org.onboard.Onboard /org/onboard/Onboard/Keyboard org.onboard.Onboard.Keyboard.ToggleVisible'))
-        p.pack_start(kb, False, False, 0)
+    def build_media(self, x):
+        p = self.pill(x, 116)
+        for ic, cmd in (('media-skip-backward', 'previous'), ('media-playback-start', 'play-pause'), ('media-skip-forward', 'next')):
+            p.pack_start(self.btn(icon(ic, 16), lambda c=cmd: sh('playerctl ' + c)), False, False, 0)
+        return x + 116 + 6
 
-    def bounce(self, w):
-        """Dock icon hops when you launch something (8 tiny frames; only the small bar window is redrawn)."""
-        if motion_mode() != 'full' or system_busy(): return
-        seq = [4, 9, 13, 14, 12, 8, 4, 0]
-        def step(i):
-            if i >= len(seq): w.set_margin_bottom(0); return False
-            w.set_margin_bottom(seq[i]); GLib.timeout_add(32, step, i + 1); return False
-        step(0)
+    def build_title(self, x):
+        p = self.pill(x, 270); self.title = self.label(self.track_txt); self.title.set_ellipsize(Pango.EllipsizeMode.END); self.title.set_max_width_chars(32)
+        p.pack_start(self.title, True, True, 6)
 
-    def build_tray(self):
-        w = 366; p = self.pill(self.sw - w - 16, w); p.set_spacing(6)
-        self.wifi = Gtk.Button(); self.bt = Gtk.Button(); self.sim = Gtk.Button()
-        for b, cmd in ((self.wifi, 'rembley-netui'), (self.bt, 'rembley-netui bt'), (self.sim, 'rembley-netui modem')):
-            b.set_relief(Gtk.ReliefStyle.NONE); b.get_style_context().add_class('dockbtn'); b.connect('clicked', lambda _b, c=cmd: sh(c))
-            p.pack_start(b, False, False, 0)
-        self.lang = Gtk.Button(label='EN'); self.lang.set_relief(Gtk.ReliefStyle.NONE); self.lang.get_style_context().add_class('dockbtn')
-        self.lang.get_style_context().add_class('tray'); self.lang.connect('clicked', lambda _b: self.switch_lang())
-        p.pack_start(self.lang, False, False, 0); GLib.timeout_add(700, self.lang_tick)
-        self.bat = Gtk.Label(); self.bat.get_style_context().add_class('tray')
-        self.tc = Gtk.Label(); self.tc.get_style_context().add_class('tray')
-        qb = Gtk.Button(); qb.set_relief(Gtk.ReliefStyle.NONE); qb.get_style_context().add_class('dockbtn')
-        row = Gtk.Box(spacing=10); row.pack_start(self.bat, False, False, 0); row.pack_start(self.tc, False, False, 0); qb.add(row)
-        qb.connect('clicked', lambda _b: QuickPanel.toggle(self.sw, self.sh, self.wall, self.blur))
-        p.pack_end(qb, False, False, 0)
+    def build_right(self):
+        widths = [('cpu', 78), ('ram', 78), ('tray', 214), ('net', 176), ('vol', 76), ('clock', 64)]
+        total = sum(w for _, w in widths) + 6 * (len(widths) - 1); x = self.sw - 8 - total
+        for name, w in widths:
+            p = self.pill(x, w); x += w + 6
+            if name == 'cpu': self.cpu_l = self.label('CPU --%'); p.pack_start(self.cpu_l, True, True, 6)
+            elif name == 'ram': self.ram_l = self.label('RAM --%'); p.pack_start(self.ram_l, True, True, 6)
+            elif name == 'tray':
+                self.wifi, self.bt, self.sim = Gtk.Button(), Gtk.Button(), Gtk.Button()
+                for b, cmd in ((self.bt, 'rembley-netui bt'), (self.sim, 'rembley-netui modem')):
+                    b.set_relief(Gtk.ReliefStyle.NONE); b.get_style_context().add_class('bar-btn'); b.connect('clicked', lambda _b, c=cmd: sh(c)); p.pack_start(b, False, False, 0)
+                self.lang = self.btn('EN', self.switch_lang); p.pack_start(self.lang, False, False, 0)
+                self.bat = self.label('--%'); p.pack_end(self.btn(self.bat, lambda: QuickPanel.toggle(self.sw, self.sh, self.wall, self.blur)), False, False, 0)
+            elif name == 'net': self.net_l = self.label(self.net_txt); self.net_l.set_ellipsize(Pango.EllipsizeMode.END); p.pack_start(self.btn(self.net_l, lambda: sh('rembley-netui')), True, True, 0)
+            elif name == 'vol': self.vol_l = self.label('♪ --%'); p.pack_start(self.btn(self.vol_l, lambda: QuickPanel.toggle(self.sw, self.sh, self.wall, self.blur)), True, True, 0)
+            elif name == 'clock': self.tc = self.label('--:--'); p.pack_start(self.btn(self.tc, lambda: QuickPanel.toggle(self.sw, self.sh, self.wall, self.blur)), True, True, 0)
+
+    # ---- live values ----
+    def stats(self):
+        try:
+            a = [int(v) for v in open('/proc/stat').readline().split()[1:8]]; idle, tot = a[3] + a[4], sum(a)
+            cpu = (1 - (idle - self._cpu[1]) / max(1, tot - self._cpu[0])) if self._cpu else 0; self._cpu = (tot, idle)
+            mi = {l.split(':')[0]: int(l.split()[1]) for l in open('/proc/meminfo') if ':' in l}; ram = 1 - mi['MemAvailable'] / mi['MemTotal']
+            if DEMO: cpu, ram = .20, .31
+            self.cpu_l.set_text('CPU %d%%' % round(cpu * 100)); self.ram_l.set_text('RAM %d%%' % round(ram * 100))
+        except Exception: pass
+        t = time.localtime(); self.tc.set_text('20:44' if DEMO else time.strftime('%H:%M', t))
+        return True
 
     def lang_tick(self):
         x = xconn(); g = x.kbd_group() if x else None
-        if g is not None: self.lang.set_label(('EN', 'RU', 'L3', 'L4')[min(g, 3)])
+        if g is not None: self.lang.get_child().set_text(('EN', 'RU', 'L3', 'L4')[min(g, 3)])
         return True
 
     def switch_lang(self):
@@ -649,49 +463,50 @@ class Bar(Win):
 
     def status(self):
         def work():
-            wl = ''
+            wl, ssid = '', ''
             try:
                 wl = open('/sys/class/net/wlan0/operstate').read().strip()
                 if wl == 'up':                                    # up but not associated -> link quality 0 in /proc/net/wireless
                     q = [l.split() for l in open('/proc/net/wireless').read().splitlines()[2:] if l.strip().startswith('wlan0')]
                     if not q or float(q[0][2].rstrip('.')) <= 0: wl = 'down'
+                    else: ssid = out("wpa_cli -i wlan0 status 2>/dev/null | sed -n 's/^ssid=//p'", 2)
             except Exception: pass
             btm = 'on' if os.path.exists('/sys/class/bluetooth/hci0') else 'off'
             sim = 'on' if os.path.exists('/sys/class/net/ppp0') else 'off'
             cap, chg = None, ''
             for d in glob.glob('/sys/class/power_supply/*'):
                 try:
-                    if open(d + '/type').read().strip() == 'Battery':
-                        cap = open(d + '/capacity').read().strip(); chg = open(d + '/status').read().strip()
+                    if open(d + '/type').read().strip() == 'Battery': cap = open(d + '/capacity').read().strip(); chg = open(d + '/status').read().strip()
                 except Exception: pass
-            GLib.idle_add(self.set_status, wl, btm, sim, cap, chg)
+            m = out("amixer sget '%s' 2>/dev/null | grep -o '[0-9]*%%' | head -1" % audio_ctl(), 2) if not DEMO else '50%'
+            tr = out('playerctl metadata --format "{{ artist }} - {{ title }}" 2>/dev/null', 2) if not DEMO else '3AM - Luna'
+            GLib.idle_add(self.set_status, wl, btm, sim, cap, chg, ssid, m, tr)
         threading.Thread(target=work, daemon=True).start(); return True
 
-    def set_status(self, wl, btm, sim, cap, chg):
+    def set_status(self, wl, btm, sim, cap, chg, ssid, vol, track):
         def setb(b, names):
             for c in b.get_children(): b.remove(c)
-            im = icon(names, 24); b.add(im); b.show_all()
-        setb(self.wifi, ['network-wireless-signal-excellent' if wl == 'up' or DEMO else 'network-wireless-offline', 'network-wireless'])
+            b.add(icon(names, 18)); b.show_all()
         setb(self.bt, ['bluetooth-active' if btm == 'on' or DEMO else 'bluetooth-disabled', 'bluetooth'])
         setb(self.sim, ['network-cellular-signal-excellent' if sim == 'on' else 'network-cellular-offline', 'phone'])
-        self.bat.set_text(('85%' if DEMO else ('%s%%%s' % (cap, '⚡' if chg == 'Charging' else '')) if cap else 'AC'))
-        t = time.localtime(); self.tc.set_text('16:42' if DEMO else time.strftime('%H:%M', t))
+        self.bat.set_text('85%' if DEMO else (('%s%%%s' % (cap, '+' if chg == 'Charging' else '')) if cap else 'AC'))
+        self.net_l.set_text('wlan0: Aesthetic' if DEMO else ('wlan0: %s' % ssid if ssid else ('wlan0: нет сети' if wl != 'up' else 'wlan0: ...')))
+        self.vol_l.set_text('♪ %s' % (vol or '--%'))
+        self.title.set_text(track if track and track.strip(' -') else 'Rembley OS')
 
     def cur_ws(self):
         x = xconn(); cur = str(x.current_desktop()) if x else out("wmctrl -d | awk '$2==\"*\"{print $1}'", 1)
         if cur == getattr(self, '_ws_cur', None): return True
         self._ws_cur = cur
         for i, b in enumerate(self.wsb):
-            ctx = b.get_style_context()
-            (ctx.add_class if cur == str(i) or (DEMO and i == 0) else ctx.remove_class)('cur')
+            on = (i == 2) if DEMO else cur == str(i); ctx = b.get_style_context()
+            (ctx.add_class if on else ctx.remove_class)('cur'); b.get_child().set_text('◉' if on else '•')
         return True
 
     def on_realize(self, *_):
-        # click-through, rounded pills: shape the window to the union of the pills (ctypes: pygobject
-        # cannot pass cairo.Region to GDK)
         rects = []
-        for x, y, w, h in self.pills:
-            r = 26
+        for x, y, w, h in self.pills:                         # click-through everywhere but the pills (shape = union of small-radius rectangles)
+            r = 5
             for yy in range(h):
                 e = r - yy - .5 if yy < r else (yy - (h - r) + .5 if yy >= h - r else None)
                 d = 0 if e is None else r - math.sqrt(max(0, r * r - e * e))
@@ -699,11 +514,10 @@ class Bar(Win):
         shape_window(self.get_window(), rects)
         gw = self.get_window()
         if GdkX11 is not None:
-            try:
-                sh('xprop -id %d -f _NET_WM_STRUT_PARTIAL 32c -set _NET_WM_STRUT_PARTIAL "0,0,0,%d,0,0,0,0,0,0,0,0,0,0"' % (gw.get_xid(), BAR))
-                sh('xprop -id %d -f _NET_WM_STRUT 32c -set _NET_WM_STRUT "0,0,0,%d"' % (gw.get_xid(), BAR))
-            except Exception:
-                pass
+            try:                                              # reserve the strip on TOP so maximised windows start below the bar
+                sh('xprop -id %d -f _NET_WM_STRUT_PARTIAL 32c -set _NET_WM_STRUT_PARTIAL "0,0,%d,0,0,0,0,0,0,%d,0,0"' % (gw.get_xid(), BAR, self.sw - 1))
+                sh('xprop -id %d -f _NET_WM_STRUT 32c -set _NET_WM_STRUT "0,0,%d,0"' % (gw.get_xid(), BAR))
+            except Exception: pass
 
 
 def shape_window(gw, rects):
@@ -756,7 +570,7 @@ class Fab(Gtk.Window):
         super().__init__(type=Gtk.WindowType.TOPLEVEL)
         S = 56
         self.set_type_hint(Gdk.WindowTypeHint.DOCK); self.set_decorated(False); self.set_keep_above(True); self.set_resizable(False)
-        self.set_default_size(S, S); self.move(sw - S - 14, sh_ - BAR - S - 8); self.get_style_context().add_class('rl-win')
+        self.set_default_size(S, S); self.move(sw - S - 14, sh_ - S - 14); self.get_style_context().add_class('rl-win')
         b = Gtk.Button(); b.set_relief(Gtk.ReliefStyle.NONE); b.get_style_context().add_class('fab'); b.set_size_request(S, S)
         b.add(appicon(['input-keyboard', 'keyboard'], S))
         b.connect('clicked', lambda _b: ctl_cmd('keyboard')); self.add(b)
