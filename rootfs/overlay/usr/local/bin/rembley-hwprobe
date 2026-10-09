@@ -30,7 +30,13 @@ def probe():
     m['soc_text'] = ' | '.join(x for x in (hw.group(1) if hw else '', dtm, dtc) if x)
     m['kernel'] = rd('/proc/sys/kernel/osrelease')
     mi = {l.split(':')[0]: int(l.split()[1]) for l in rd('/proc/meminfo').splitlines() if ':' in l and len(l.split()) > 1}
-    m['ram_mb'] = mi.get('MemTotal', 0) // 1024
+    m['ram_mb'] = mi.get('MemTotal', 0) // 1024                       # usable by the system (what zram/min_free are derived from)
+    try:
+        import rembley_ram                                            # physical RAM from iomem / device tree / boot log, never from a bootloader claim
+        rm = rembley_ram.measure() if not ROOT else {'physical_mb': m['ram_mb'], 'sources': {}}
+        m['ram_phys_mb'], m['ram_sources'] = rm['physical_mb'], rm['sources']
+    except Exception:
+        m['ram_phys_mb'], m['ram_sources'] = m['ram_mb'], {}
     m['cores'] = len(re.findall(r'^processor\s*:', ci, re.M)) or (os.cpu_count() or 0)
     vs = rd('/sys/class/graphics/fb0/virtual_size').split(','); st = rd('/sys/class/graphics/fb0/stride'); bpp = rd('/sys/class/graphics/fb0/bits_per_pixel')
     virt = (int(vs[0]), int(vs[1])) if len(vs) == 2 and all(v.isdigit() for v in vs) else None
@@ -104,7 +110,7 @@ def derive(m, v):
 
 def apply(d, v, m):
     os.makedirs(os.path.dirname(DEV), exist_ok=True)
-    body = ['# written by rembley-hwprobe at every boot from the measured hardware; do not edit', 'DEVICE_MATCH=%s' % v, 'RAM_MB=%d' % m['ram_mb'], 'KERNEL=%s' % m['kernel']]
+    body = ['# written by rembley-hwprobe at every boot from the measured hardware; do not edit', 'DEVICE_MATCH=%s' % v, 'RAM_MB=%d' % m['ram_mb'], 'RAM_PHYS_MB=%d' % m['ram_phys_mb'], 'KERNEL=%s' % m['kernel']]
     body += ['%s=%s' % (k, d[k]) for k in sorted(d) if k != 'DPI']
     tmp = DEV + '.new'; open(tmp, 'w').write('\n'.join(body) + '\n'); os.replace(tmp, DEV)
     if 'DPI' in d:                                                           # never override a DPI the user set by hand

@@ -34,6 +34,15 @@ s_device() {
     *) echo "устройство не похоже на A73: применены только значения, зависящие от ОЗУ"; ret 3 ;;
   esac
 }
+s_ram() {
+  j=$(/usr/local/bin/rembley-ramtest --json 2>/dev/null); rc=$?
+  line=$(echo "$j" | python3 -c "import json,sys; d=json.load(sys.stdin); m=d['measured']; t=d['test'] or {}; print('доступно %d МБ, физически %d МБ (по %s); проверка %d МБ: плохих %d, наложений %d' % (m['usable_mb'], m['physical_mb'], ', '.join(sorted(m['sources'])) or 'meminfo', t.get('tested_mb',0), t.get('bad_pages',0), t.get('aliased_pages',0)))" 2>/dev/null)
+  case $rc in
+    0) echo "${line:-память измерена}"; ret 0 ;;
+    3) echo "ПАМЯТЬ НЕ ПРОШЛА ПРОВЕРКУ: ${line}"; ret 1 ;;
+    *) echo "${line:-память измерена}: есть замечания (rembley-ramtest)"; ret 3 ;;
+  esac
+}
 s_dirs() { mkdir -p /root/{Documents,Downloads,Pictures,Music,Videos,Projects,.config/rembley}; for x in Documents Downloads Pictures Music Videos Projects; do [ -d /root/$x ] || { echo "нет папки $x"; ret 1; return; }; done; echo "папки пользователя созданы"; ret 0; }
 s_locale() {
   locale -a 2>/dev/null | grep -qi 'ru_RU.utf8' || locale-gen en_US.UTF-8 ru_RU.UTF-8 >/dev/null 2>&1
@@ -87,15 +96,15 @@ s_update() {
 
 [ -n "$REMBLEY_AUTO_STEPS" ] && . "$REMBLEY_AUTO_STEPS"      # test hook: replaces the s_* functions
 [ "$1" = --pending ] && {
-  for n in device dirs locale hostname caches touch drivers net chips selftest update; do
+  for n in device ram dirs locale hostname caches touch drivers net chips selftest update; do
     [ -e $D/auto-$n.pass ] && continue; [ "$(tries $n)" -ge 3 ] && continue; exit 0; done; exit 1; }
 
 echo "=== rembley-autosetup $(date '+%F %T')"
-for n in device dirs locale hostname caches touch drivers net chips selftest update; do run $n s_$n; done
+for n in device ram dirs locale hostname caches touch drivers net chips selftest update; do run $n s_$n; done
 {
   echo "Автонастройка Rembley, $(date '+%F %T')"; echo
   nfail=0; nwait=0; nwarn=0
-  for n in device dirs locale hostname caches touch drivers net chips selftest update; do
+  for n in device ram dirs locale hostname caches touch drivers net chips selftest update; do
     printf '%-5s %-9s %s\n' "${RES[$n]}" "$n" "${DET[$n]}"
     case ${RES[$n]} in FAIL) nfail=$((nfail+1));; WAIT) nwait=$((nwait+1));; WARN) nwarn=$((nwarn+1));; esac
   done

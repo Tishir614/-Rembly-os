@@ -94,6 +94,15 @@ if [ "$DRY" = 0 ]; then
   prod=$(fbget product); [ "$prod" = "$EXPECT_PRODUCT" ] || die "product is '$prod', expected $EXPECT_PRODUCT - wrong device, refusing"
   unl=$(fbget unlocked);  [ "$unl" = yes ] || die "bootloader is locked (unlocked: '$unl'). Not touching anything."
   echo "device OK: product=$prod unlocked=$unl"
+  # What the bootloader SAYS about itself. These are claims, not measurements: Rembley never uses them. The OS measures the real RAM by itself at every boot
+  # (rembley-hwprobe / rembley-ramtest: /proc/iomem, device tree, boot log, pattern test). The claims are saved so you can compare them afterwards.
+  CLAIMS=$DIR/fastboot-claims-$(date +%Y%m%d-%H%M%S).txt
+  "${FB[@]}" getvar all > "$CLAIMS" 2>&1 || true
+  echo "bootloader claims saved to $CLAIMS ($(grep -c . "$CLAIMS") lines)"
+  ramlines=$(grep -iE 'ram|dram|mem' "$CLAIMS" | grep -viE 'partition|userdata|cache|system|vendor' | sed 's/^(bootloader) //' | head -8)
+  if [ -n "$ramlines" ]; then echo "memory values the bootloader reports (UNVERIFIED):"; echo "$ramlines" | sed 's/^/    /'
+  else echo "the bootloader reports no memory value (normal for LK); the real RAM is measured by the OS after boot"; fi
+  echo "after the first boot run on the tablet:  rembley-ramtest        (add --claim <MB> to compare with any number you were told)"
   if [ "$MODE" != test ]; then
     mds=$(fbget max-download-size); [ -n "$mds" ] && echo "tablet accepts downloads up to $((mds)) bytes per chunk (fastboot splits the image itself)"
     ps=$(fbget partition-size:userdata); [ -z "$ps" ] && echo "note: tablet does not report partition-size:userdata; fastboot will fail cleanly if the image is too big" || {

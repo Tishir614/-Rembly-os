@@ -34,6 +34,13 @@ def checks():
     tp = bool(r)
     if tp and run('pgrep -f "[r]embley-touchd"'): add('Жесты (rembley-touchd)', 'ok', 'работает')
     elif tp: add('Жесты (rembley-touchd)', 'warn', 'не запущен', 'cat /var/log/rembley-touchd.log')
+    # --- RAM: measured, not claimed
+    try:
+        import json as _j2
+        rj = _j2.loads(run('rembley-ramtest --json', 60) or '{}'); mm = rj['measured']
+        add('Оперативная память', {'ok': 'ok', 'warn': 'warn'}.get(rj['verdict'], 'fail'), 'доступно %d МБ, физически %d МБ; проверка: %s' % (mm['usable_mb'], mm['physical_mb'], rj['verdict']), '; '.join(rj['notes']))
+    except Exception as e:
+        add('Оперативная память', 'warn', 'rembley-ramtest не ответил: %s' % e)
     # --- connectivity chips (see rembley-chips)
     try:
         import json as _j
