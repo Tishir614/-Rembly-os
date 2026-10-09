@@ -13,7 +13,7 @@
 040755        0 system/bin
 100755  1239356 bin/busybox
 100755  1162208 sbin/adbd
-100755     5421 init
+100755     5410 init
 100644       77 etc/mdev.conf
 100644    46260 splash.32.gz
 100644    22231 splash.16.gz
