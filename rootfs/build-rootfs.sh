@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Stage 2: Rembley OS rootfs (Ubuntu 20.04 "focal" armhf, no systemd as PID 1) -> ext4 image labelled REMBLEY.
+# Stage 2: Rembly OS rootfs (Ubuntu 20.04 "focal" armhf, no systemd as PID 1) -> ext4 image labelled REMBLY.
 # Run as root on an x86-64 Ubuntu/Debian PC:  sudo rootfs/build-rootfs.sh [size_MiB] [minimal|desktop]
 # Needs: debootstrap qemu-user-static e2fsprogs (binfmt_misc enabled).
 set -euo pipefail
 SIZE=${1:-3584}; PROFILE=${2:-desktop}
-HERE=$(cd "$(dirname "$0")/.." && pwd); OUT=$HERE/out; R=${ROOTFS_DIR:-/var/rembley/rootfs}
+HERE=$(cd "$(dirname "$0")/.." && pwd); OUT=$HERE/out; R=${ROOTFS_DIR:-/var/rembly/rootfs}
 MIRROR=${MIRROR:-https://ports.ubuntu.com/ubuntu-ports}
 mkdir -p "$OUT" "$(dirname "$R")"
 
 # Wi-Fi/BT helper files: if you point ANDROID_DUMP at your backup folder (system.bin + vendor.bin) they are extracted automatically.
 #   ANDROID_DUMP=/home/you/backup sudo -E rootfs/build-rootfs.sh        (REFRESH_BLOBS=1 to redo it)
-# Without it the image still works: on first boot the tablet takes them from its OWN Android partitions (rembley-drivers).
+# Without it the image still works: on first boot the tablet takes them from its OWN Android partitions (rembly-drivers).
 if [ -n "${ANDROID_DUMP:-}" ] && { [ ! -f "$OUT/android-blobs.tar.gz" ] || [ -n "${REFRESH_BLOBS:-}" ]; }; then
   [ -f "$ANDROID_DUMP/system.bin" ] || { echo "ANDROID_DUMP=$ANDROID_DUMP has no system.bin" >&2; exit 1; }
   vend=(); [ -f "$ANDROID_DUMP/vendor.bin" ] && vend=("$ANDROID_DUMP/vendor.bin")
@@ -54,7 +54,7 @@ chroot "$R" /usr/bin/env DEBIAN_FRONTEND=noninteractive sh -ec "
   apt-get install -y --no-install-recommends $PKGS_MIN $( [ "$PROFILE" = desktop ] && echo "$PKGS_DESK" )
   for l in ru_RU.UTF-8 en_US.UTF-8; do locale-gen \$l >/dev/null 2>&1 || true; done; update-locale LANG=ru_RU.UTF-8 2>/dev/null || true
   ln -sf /usr/share/zoneinfo/UTC /etc/localtime; echo UTC > /etc/timezone
-  echo root:rembley | chpasswd
+  echo root:rembly | chpasswd
   ssh-keygen -A
   apt-get clean; rm -rf /var/lib/apt/lists/*"
 rm -f "$R/usr/sbin/policy-rc.d"
@@ -64,27 +64,27 @@ find "$HERE/rootfs/overlay" -name __pycache__ -prune -exec rm -rf {} + 2>/dev/nu
 rm -f "$R/usr/sbin/init" "$R/sbin/init"   # was a symlink to systemd; never write through it
 cp -a --remove-destination "$HERE/rootfs/overlay/." "$R/"
 chroot "$R" glib-compile-schemas --strict /usr/share/glib-2.0/schemas
-chroot "$R" sh -c "update-desktop-database /usr/share/applications; update-mime-database /usr/share/mime" >/dev/null 2>&1 || true   # Onboard auto-show + docking defaults (99_rembley override)
+chroot "$R" sh -c "update-desktop-database /usr/share/applications; update-mime-database /usr/share/mime" >/dev/null 2>&1 || true   # Onboard auto-show + docking defaults (99_rembly override)
 rm -f "$R/etc/X11/xorg.conf.d/20-touch.conf" "$R/etc/X11/xorg.conf.d/10-fbdev.conf"   # superseded by files generated at session start
 mkdir -p "$R/system/bin" "$R/var/log" "$R/run/user" "$R/root/Projects"
 ln -sf /bin/busybox "$R/sbin/mdev"
 if [ -f "$OUT/android-blobs.tar.gz" ]; then      # Wi-Fi/BT/modem blobs from the user's own firmware (tools/extract_android_blobs.py)
   echo "== adding android blobs"; tar -xzf "$OUT/android-blobs.tar.gz" -C "$R"
-else echo "NOTE: no android-blobs.tar.gz in the image: on first boot the tablet fetches the Wi-Fi/BT files from its own Android partitions (rembley-drivers). To bake them in: ANDROID_DUMP=<backup folder> sudo -E rootfs/build-rootfs.sh"; fi
+else echo "NOTE: no android-blobs.tar.gz in the image: on first boot the tablet fetches the Wi-Fi/BT files from its own Android partitions (rembly-drivers). To bake them in: ANDROID_DUMP=<backup folder> sudo -E rootfs/build-rootfs.sh"; fi
 ln -sf /bin/sh "$R/system/bin/sh"        # adbd (started by stage 1) expects /system/bin/sh
-chroot "$R" python3 -m compileall -q /usr/local/lib/rembley     # cached .pyc: faster desktop start on the slow CPU
-date +%s > "$R/etc/rembley/buildtime"
-# what a COMPLETE install looks like: rembley-repair compares the running system with this at every login and fetches what is missing
-python3 "$HERE/rootfs/overlay/usr/local/bin/rembley-repair" manifest "$HERE/rootfs/overlay" > "$R/usr/share/rembley/MANIFEST.sha256"
-printf '%s\n' $PKGS_MIN $( [ "$PROFILE" = desktop ] && echo "$PKGS_DESK" ) | sort -u > "$R/usr/share/rembley/packages.txt"
-chmod +x "$R/usr/sbin/init" "$R"/usr/local/bin/rembley-* "$R"/etc/rembley/rc.d/*.sh "$R/etc/rembley/udhcpc.script"; [ -e "$R/sbin/init" ] || ln -s /usr/sbin/init "$R/sbin/init"
+chroot "$R" python3 -m compileall -q /usr/local/lib/rembly     # cached .pyc: faster desktop start on the slow CPU
+date +%s > "$R/etc/rembly/buildtime"
+# what a COMPLETE install looks like: rembly-repair compares the running system with this at every login and fetches what is missing
+python3 "$HERE/rootfs/overlay/usr/local/bin/rembly-repair" manifest "$HERE/rootfs/overlay" > "$R/usr/share/rembly/MANIFEST.sha256"
+printf '%s\n' $PKGS_MIN $( [ "$PROFILE" = desktop ] && echo "$PKGS_DESK" ) | sort -u > "$R/usr/share/rembly/packages.txt"
+chmod +x "$R/usr/sbin/init" "$R"/usr/local/bin/rembly-* "$R"/etc/rembly/rc.d/*.sh "$R/etc/rembly/udhcpc.script"; [ -e "$R/sbin/init" ] || ln -s /usr/sbin/init "$R/sbin/init"
 cleanup; trap - EXIT
 
-echo "== packing ext4 image (${SIZE} MiB, label REMBLEY)"
-IMG=$OUT/rembley-rootfs.img
+echo "== packing ext4 image (${SIZE} MiB, label REMBLY)"
+IMG=$OUT/rembly-rootfs.img
 rm -f "$IMG"; truncate -s "${SIZE}M" "$IMG"
-mke2fs -q -t ext4 -L REMBLEY -d "$R" -F "$IMG"
+mke2fs -q -t ext4 -L REMBLY -d "$R" -F "$IMG"
 du -sh "$R"; ls -lh "$IMG"; sha256sum "$IMG" | tee "$IMG.sha256"
 # sparse copy: fastboot flashes it much faster (only the used blocks are sent)
-if command -v img2simg >/dev/null; then img2simg "$IMG" "$OUT/rembley-rootfs.sparse.img" && ls -lh "$OUT/rembley-rootfs.sparse.img"; else echo "note: img2simg not found (sudo apt install android-sdk-libsparse-utils) -> no sparse image, fastboot will use the raw one"; fi
-echo "Copy to SD/USB as a REMBLEY-labelled ext4 partition, or put on any fs as /rembley-rootfs.img"
+if command -v img2simg >/dev/null; then img2simg "$IMG" "$OUT/rembly-rootfs.sparse.img" && ls -lh "$OUT/rembly-rootfs.sparse.img"; else echo "note: img2simg not found (sudo apt install android-sdk-libsparse-utils) -> no sparse image, fastboot will use the raw one"; fi
+echo "Copy to SD/USB as a REMBLY-labelled ext4 partition, or put on any fs as /rembly-rootfs.img"

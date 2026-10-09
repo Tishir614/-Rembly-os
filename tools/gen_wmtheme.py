@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Generates the 'Rembley' xfwm4 window-frame theme (colourful purple/pink frame instead of the plain grey one).
+"""Generates the 'Rembly' xfwm4 window-frame theme (colourful purple/pink frame instead of the plain grey one).
 Frame geometry matches Default-xhdpi (title 58 px, borders 12 px), so every window of the desktop gets the same look.
-usage: tools/gen_wmtheme.py [OUTDIR]   (default rootfs/overlay/usr/share/themes/Rembley/xfwm4)"""
+usage: tools/gen_wmtheme.py [OUTDIR]   (default rootfs/overlay/usr/share/themes/Rembly/xfwm4)"""
 import os, shutil, sys
 from PIL import Image, ImageDraw, ImageFilter
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, 'rootfs/overlay/usr/share/themes/Rembley/xfwm4')
+OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, 'rootfs/overlay/usr/share/themes/Rembly/xfwm4')
 os.makedirs(OUT, exist_ok=True)
 TH, BW, W, H, R = 34, 3, 400, 300, 6
 S = 4                                                       # supersampling for smooth corners

@@ -1,0 +1,19 @@
+#!/bin/sh
+# The desktop session proper (child of dbus-launch, so DBUS_SESSION_BUS_ADDRESS is shared by all of these).
+unclutter -idle 1 -root 2>/dev/null &                  # hide the cursor when idle: the UI is touch-only
+dunst 2>/dev/null &                                    # notifications
+xfsettingsd 2>/dev/null &                              # theme/fonts from xfconf
+xfwm4 --compositor=off 2>/dev/null &                   # window manager, no compositing = no lag
+onboard 2>/dev/null &                                  # on-screen keyboard: auto-shows on text fields (see gschema override)
+rembly-touchd >/var/log/rembly-touchd.log 2>&1 &            # long-press = right click, edge swipes
+rembly-power >/var/log/rembly-power.log 2>&1 &       # screen dim/off, power key, low battery, clock stamp
+rembly-thermal >/dev/null 2>&1 &                            # overheating guard (eco mode at 80 C)
+rembly-profile apply >/dev/null 2>&1                       # restore the saved power profile
+rembly-repair auto >/dev/null 2>&1 &                         # login check: missing files/packages/drivers are fetched (waits for Wi-Fi if needed)
+rembly-doctor watch >/dev/null 2>&1 &                    # offline auto-repair of known errors
+sleep 1
+# UI first: Xorg, window manager, keyboard and shell outrank applications (apps are started at nice +10 / low IO priority)
+renice -n -8 -p $(pidof Xorg) >/dev/null 2>&1; ionice -c2 -n0 -p $(pidof Xorg) >/dev/null 2>&1
+for n in xfwm4 onboard rembly-touchd; do renice -n -5 -p $(pidof "$n") >/dev/null 2>&1; done
+renice -n -5 -p $$ >/dev/null 2>&1; ionice -c2 -n0 -p $$ >/dev/null 2>&1       # the shell (exec below keeps this pid) and what it starts inherit, apps add +10
+exec /usr/local/bin/rembly-shell

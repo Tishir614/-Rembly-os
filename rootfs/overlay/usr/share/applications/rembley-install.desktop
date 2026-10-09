@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Установка программы
-Comment=Установить .deb или AppImage
-Exec=xfce4-terminal --hold --title="Установка" -e "rembley-install %f"
-Icon=system-software-install
-NoDisplay=true
-MimeType=application/vnd.debian.binary-package;application/x-deb;application/x-debian-package;application/vnd.appimage;application/x-iso9660-appimage;
-Categories=System;

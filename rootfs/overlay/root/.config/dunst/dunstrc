@@ -9,11 +9,11 @@
     padding = 14
     horizontal_padding = 16
     frame_width = 1
-    frame_color = "#b8a8ff"
+    frame_color = "#f2f2f2"
     separator_color = frame
     sort = yes
     idle_threshold = 120
-    font = Noto Sans 12
+    font = Fira Code 11
     line_height = 0
     markup = full
     format = "<b>%s</b>\n%b"
@@ -35,15 +35,15 @@
     mouse_middle_click = do_action
     mouse_right_click = close_all
 [urgency_low]
-    background = "#1c1530"
-    foreground = "#cfc6ee"
+    background = "#0b0b0b"
+    foreground = "#bdbdbd"
     timeout = 4
 [urgency_normal]
-    background = "#241a40"
-    foreground = "#f1ecff"
+    background = "#0f0f0f"
+    foreground = "#f2f2f2"
     timeout = 6
 [urgency_critical]
-    background = "#5a1f3a"
-    foreground = "#ffffff"
-    frame_color = "#ff6b9a"
+    background = "#f2f2f2"
+    foreground = "#050505"
+    frame_color = "#ffffff"
     timeout = 0

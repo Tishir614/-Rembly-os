@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# restore-android.sh - put the ORIGINAL Android boot/recovery images back (undo flash-rembley.sh install modes).
+# restore-android.sh - put the ORIGINAL Android boot/recovery images back (undo flash-rembly.sh install modes).
 #   tools/restore-android.sh --backup-dir DIR [--format-userdata] [--serial SN] [--dry-run] [--yes]
 # DIR must contain your original boot.bin and recovery.bin. Only the partitions boot and recovery are written.
 # --format-userdata also erases userdata (needed after Linux lived there: Android then formats it itself on first start).

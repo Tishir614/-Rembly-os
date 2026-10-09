@@ -1,8 +1,8 @@
 #!/bin/sh
-# Rembley OS stage-2 init (PID 1). No systemd: kernel 3.18 has no devtmpfs/cgroups/namespaces.
+# Rembly OS stage-2 init (PID 1). No systemd: kernel 3.18 has no devtmpfs/cgroups/namespaces.
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 BB=/bin/busybox
-say() { echo "[rembley] $*" >/dev/console 2>/dev/null; echo "[rembley] $*"; }
+say() { echo "[rembly] $*" >/dev/console 2>/dev/null; echo "[rembly] $*"; }
 
 grep -q ' /proc ' /proc/mounts 2>/dev/null || mount -t proc proc /proc
 grep -q ' /sys '  /proc/mounts || mount -t sysfs sysfs /sys
@@ -25,15 +25,15 @@ ln -sf /proc/self/fd /dev/fd; ln -sf /proc/self/fd/0 /dev/stdin
 ln -sf /proc/self/fd/1 /dev/stdout; ln -sf /proc/self/fd/2 /dev/stderr
 # ---- boot progress bar: refills the track that stage 1 drew on the splash (800x1280 raw framebuffer; skipped if the format differs) ----
 BAR=0; BPP=$(cat /sys/class/graphics/fb0/bits_per_pixel 2>/dev/null); STRIDE=$(cat /sys/class/graphics/fb0/stride 2>/dev/null)
-BROW=$(cat /usr/share/rembley/boot/row 2>/dev/null)
+BROW=$(cat /usr/share/rembly/boot/row 2>/dev/null)
 bootbar() {   # bootbar N  (0..8)
-  [ -n "$BPP" ] && [ "$STRIDE" = "$((800 * BPP / 8))" ] && [ -n "$BROW" ] && [ -w /dev/fb0 ] && [ -f /usr/share/rembley/boot/bar-$1.$BPP.gz ] || return 0
-  $BB gunzip -c /usr/share/rembley/boot/bar-$1.$BPP.gz | $BB dd of=/dev/fb0 bs="$STRIDE" seek="$BROW" conv=notrunc 2>/dev/null
+  [ -n "$BPP" ] && [ "$STRIDE" = "$((800 * BPP / 8))" ] && [ -n "$BROW" ] && [ -w /dev/fb0 ] && [ -f /usr/share/rembly/boot/bar-$1.$BPP.gz ] || return 0
+  $BB gunzip -c /usr/share/rembly/boot/bar-$1.$BPP.gz | $BB dd of=/dev/fb0 bs="$STRIDE" seek="$BROW" conv=notrunc 2>/dev/null
 }
 bootbar 1
-hostname "$(cat /etc/hostname 2>/dev/null || echo rembley)"
+hostname "$(cat /etc/hostname 2>/dev/null || echo rembly)"
 ip link set lo up 2>/dev/null
-for t in /etc/rembley/rc.d/*.sh; do
+for t in /etc/rembly/rc.d/*.sh; do
   [ -x "$t" ] && "$t" 2>&1 | while read l; do say "$l"; done
   BAR=$((BAR + 1)); [ $BAR -gt 6 ] && BAR=6; bootbar $((BAR + 1))
 done
@@ -43,14 +43,14 @@ mkdir -p /var/lib/dbus; dbus-uuidgen --ensure 2>/dev/null
 dbus-daemon --system --fork 2>/dev/null
 
 bootbar 8
-say "Rembley OS up. Starting graphical session (touch: $(rembley-touchprobe 2>/dev/null || echo not found))"
+say "Rembly OS up. Starting graphical session (touch: $(rembly-touchprobe 2>/dev/null || echo not found))"
 # Supervisor: respawn the session; if X dies repeatedly fall back to a console shell.
 fails=0
 while true; do
-  /usr/local/bin/rembley-session; rc=$?
+  /usr/local/bin/rembly-session; rc=$?
   fails=$((fails+1)); say "session exited ($rc), failure $fails"
   if [ $fails -ge 3 ]; then
-    say "falling back to console shell (see /var/log/rembley-x.log)"
+    say "falling back to console shell (see /var/log/rembly-x.log)"
     setsid sh -c 'exec sh </dev/console >/dev/console 2>&1'; fails=0
   fi
   sleep 2

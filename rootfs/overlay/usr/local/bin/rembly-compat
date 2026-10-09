@@ -1,0 +1,25 @@
+#!/bin/sh
+# What kind of Linux programs can run on THIS kernel? (stock MediaTek 3.18.79: several modern features are compiled out)
+ok() { printf '  [ ok ] %s\n' "$*"; }; no() { printf '  [FAIL] %s\n' "$*"; }; wn() { printf '  [warn] %s\n' "$*"; }
+has() { grep -qw "$1" /proc/filesystems 2>/dev/null; }
+echo "== Rembly Linux compatibility report"
+echo "kernel: $(uname -r)  arch: $(uname -m) / dpkg: $(dpkg --print-architecture 2>/dev/null)  userland: $(. /etc/os-release 2>/dev/null; echo "$PRETTY_NAME")"
+echo "RAM: $(awk '/MemTotal/{printf "%d MB",$2/1024}' /proc/meminfo), swap: $(awk '/SwapTotal/{printf "%d MB",$2/1024}' /proc/meminfo), free disk on /: $(df -m --output=avail / | tail -1 | tr -d ' ') MB"
+echo; echo "== Kernel features"
+NS=0; { [ -e /proc/self/ns/user ] && unshare -U true 2>/dev/null; } && { ok "user namespaces"; NS=1; } || no "user namespaces (needed by Flatpak, Snap, Docker rootless, Chromium/Electron sandbox)"
+[ -e /proc/self/ns/mnt ] && unshare -m true 2>/dev/null && ok "mount namespaces" || no "mount namespaces"
+[ -d /sys/fs/cgroup ] && [ -s /proc/cgroups ] && ok "cgroups ($(awk 'NR>1&&$4==1{printf "%s ",$1}' /proc/cgroups))" || no "cgroups"
+has overlay && ok "overlayfs" || no "overlayfs (Docker image layers)"
+has fuse && [ -e /dev/fuse ] && ok "FUSE (/dev/fuse present)" || wn "FUSE not usable (AppImage runs in extract-and-run mode instead)"
+[ -e /proc/sys/fs/binfmt_misc/status ] && ok "binfmt_misc (can run foreign-arch binaries via qemu)" || no "binfmt_misc (no transparent x86/x86_64 emulation)"
+grep -q '^Seccomp:' /proc/self/status && ok "seccomp" || wn "seccomp missing (some sandboxes degrade)"
+[ -r /proc/sys/fs/inotify/max_user_watches ] && ok "inotify (watches: $(cat /proc/sys/fs/inotify/max_user_watches))" || no "inotify"
+[ -d /dev/dri ] && ok "GPU/DRM nodes" || wn "no /dev/dri: OpenGL is software-rendered (Mesa llvmpipe/swrast): fine for 2D, slow for 3D"
+[ -s /proc/asound/cards ] && ok "ALSA sound card: $(head -1 /proc/asound/cards | cut -c1-60)" || wn "no ALSA sound card visible"
+echo; echo "== What this means"
+echo "  Native armhf programs from Ubuntu 20.04 (apt / .deb / AppImage for ARM): YES   -> rembly-pkg install NAME, rembly-install FILE"
+echo "  Python / Node / GCC / Git, GTK & Qt apps, terminal tools:          YES"
+[ $NS = 1 ] && echo "  Flatpak / Snap / Docker:                                          POSSIBLE (needs more kernel features too)" || echo "  Flatpak / Snap / Docker:                                          NO (kernel lacks namespaces). Use apt packages instead."
+[ $NS = 1 ] && echo "  Chromium / Electron apps (VS Code, Discord...):                   YES" || echo "  Chromium / Electron apps (VS Code, Discord...):                   ONLY with --no-sandbox: rembly-nosandbox NAME (and they are heavy on 2 GB RAM)"
+echo "  x86 / x86_64 / aarch64 programs and Windows (Wine):               NO  (CPU is 32-bit ARM; kernel has no binfmt_misc for transparent emulation)"
+echo "  3D games / video editors / Blender:                               NOT PRACTICAL (no GPU acceleration, 2 GB RAM)"

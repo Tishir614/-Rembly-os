@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# verify-images.sh - offline pre-flight check of everything that will be flashed. Run by flash-rembley.sh automatically.
+# verify-images.sh - offline pre-flight check of everything that will be flashed. Run by flash-rembly.sh automatically.
 #   tools/verify-images.sh [DIR] [--stock-boot boot.bin] [--quick] [--boot-only]
 # Exit code 0 = every check passed. It never talks to the tablet and never writes anything.
 set -u
 DIR=out; STOCK=""; QUICK=0; BONLY=0
 while [ $# -gt 0 ]; do case $1 in --stock-boot) STOCK=$2; shift;; --quick) QUICK=1;; --boot-only) BONLY=1;; -*) echo "unknown $1"; exit 2;; *) DIR=$1;; esac; shift; done
-BOOT=$DIR/A73-linux-test.img; RAW=$DIR/rembley-rootfs.img; SP=$DIR/rembley-rootfs.sparse.img
+BOOT=$DIR/A73-linux-test.img; RAW=$DIR/rembly-rootfs.img; SP=$DIR/rembly-rootfs.sparse.img
 fail=0; ok() { echo "  OK    $*"; }; bad() { echo "  FAIL  $*"; fail=1; }; warn() { echo "  warn  $*"; }
 le32() { od -An -tu4 -j"$2" -N4 "$1" | tr -d ' '; }
 
@@ -27,12 +27,12 @@ fi
 echo "== rootfs ($RAW)"
 if [ $BONLY = 1 ]; then warn "skipped (--boot-only)"; elif [ ! -f "$RAW" ]; then bad "missing"; else
   [ "$(od -An -tx1 -j1080 -N2 "$RAW" | tr -d ' ')" = 53ef ] && ok "ext4 magic" || bad "not ext4"
-  [ "$(dd if="$RAW" bs=1 skip=1144 count=16 2>/dev/null | tr -d '\0')" = REMBLEY ] && ok "label REMBLEY (stage 1 finds it)" || bad "label is not REMBLEY"
+  [ "$(dd if="$RAW" bs=1 skip=1144 count=16 2>/dev/null | tr -d '\0')" = REMBLY ] && ok "label REMBLY (stage 1 finds it)" || bad "label is not REMBLY"
   if command -v e2fsck >/dev/null; then
     if [ $QUICK = 1 ]; then warn "e2fsck skipped (--quick)"; else e2fsck -fn "$RAW" >/dev/null 2>&1 && ok "e2fsck: filesystem is clean" || bad "e2fsck reports errors"; fi
   else warn "e2fsck not installed, filesystem not checked"; fi
   if command -v debugfs >/dev/null; then
-    for f in /usr/sbin/init /usr/local/bin/rembley-shell /usr/local/bin/rembley-update /etc/rembley/update.conf /usr/local/bin/rembley-autosetup; do
+    for f in /usr/sbin/init /usr/local/bin/rembly-shell /usr/local/bin/rembly-update /etc/rembly/update.conf /usr/local/bin/rembly-autosetup; do
       debugfs -R "stat $f" "$RAW" 2>&1 | grep -q 'Inode:' && ok "contains $f" || bad "missing inside image: $f"; done
   fi
   echo "  size: $(( $(stat -c %s "$RAW") / 1048576 )) MiB (the flash script compares this with the tablet's userdata)"
@@ -42,7 +42,7 @@ echo "== sparse image ($SP)"
 if [ $BONLY = 1 ]; then warn "skipped (--boot-only)"; elif [ -f "$SP" ]; then
   [ "$(le32 "$SP" 0)" = $((0xED26FF3A)) ] && ok "sparse magic" || bad "not an Android sparse image"
   if command -v simg2img >/dev/null && [ $QUICK = 0 ] && [ -f "$RAW" ]; then
-    TMP=$(mktemp "${TMPDIR:-/tmp}/rembley-verify.XXXXXX"); need=$(stat -c %s "$RAW"); have=$(df --output=avail -B1 "$(dirname "$TMP")" | tail -1)
+    TMP=$(mktemp "${TMPDIR:-/tmp}/rembly-verify.XXXXXX"); need=$(stat -c %s "$RAW"); have=$(df --output=avail -B1 "$(dirname "$TMP")" | tail -1)
     if [ "$have" -gt "$need" ]; then
       simg2img "$SP" "$TMP" 2>/dev/null && cmp -s "$TMP" "$RAW" && ok "sparse image expands to exactly the raw image" || bad "sparse image differs from raw image"
     else warn "not enough temp space to compare sparse with raw (set TMPDIR)"; fi

@@ -1,5 +1,0 @@
-#!/bin/sh
-# Do-not-disturb toggle for dunst 1.4 (it has no dunstctl): SIGUSR1 pauses notifications, SIGUSR2 resumes them.
-mkdir -p /run/rembley
-if [ -e /run/rembley/dnd ]; then rm -f /run/rembley/dnd; pkill -USR2 -x dunst; notify-send "Уведомления включены" 2>/dev/null
-else touch /run/rembley/dnd; notify-send "Не беспокоить: включено" 2>/dev/null; sleep 1; pkill -USR1 -x dunst; fi

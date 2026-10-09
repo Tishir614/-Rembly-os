@@ -1,0 +1,304 @@
+#!/usr/bin/env python3
+"""rembly-doctor - offline auto-repair. Reads the error logs, recognises KNOWN problems and applies SAFE fixes.
+
+  rembly-doctor            check once, fix what it knows, print the result
+  rembly-doctor --dry-run  only say what it would do
+  rembly-doctor history    last 60 lines of what the doctor did
+  rembly-doctor watch      background mode (started by the desktop): looks every 60 s, at low priority
+  rembly-doctor --ai       for errors it does not know, ask the optional AI helper (see rembly-ai)
+
+HONEST LIMITS: it fixes only problems that are in its rule table below. An unknown error is reported, not 'fixed'.
+It never touches nvram/nvdata/protect/secro or any partition, never deletes user files."""
+import json, os, re, subprocess, sys, time
+
+LOGS = os.environ['REMBLY_DOCTOR_LOGS'].split(':') if os.environ.get('REMBLY_DOCTOR_LOGS') else ['/var/log/rembly-crash.log', '/var/log/rembly-net.log', '/var/log/rembly-shell.log', '/var/log/Xorg.0.log',
+        '/var/log/apt/term.log', '/var/log/wmt_launcher.log']
+STATE = os.environ.get('REMBLY_DOCTOR_STATE', '/run/rembly/doctor.json')   # /run: cleared every boot, so dmesg is read once per boot
+HIST = '/var/log/rembly-doctor.log'
+DRY = '--dry-run' in sys.argv
+
+
+def sh(cmd, t=300):
+    if DRY: return 0, '(dry-run) ' + cmd
+    try:
+        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=t)
+        return r.returncode, (r.stdout + r.stderr)[-2000:]
+    except Exception as e:
+        return 1, str(e)
+
+
+def online():
+    return subprocess.run('ip route 2>/dev/null | grep -q default', shell=True).returncode == 0
+
+
+def log(msg):
+    line = time.strftime('%F %T ') + msg
+    print(line)
+    try:
+        with open(HIST, 'a') as f: f.write(line + '\n')
+    except OSError: pass
+
+
+# ---- fixes: each takes the regex match, returns (ok, text). Only safe, reversible actions. ----
+def fix_pymod(m):
+    mod = m.group(1).split('.')[0]
+    if not online(): return False, 'нужна сеть, чтобы поставить python3-%s' % mod
+    pkg = 'python3-' + mod.lower().replace('_', '-')
+    rc, out = sh('rembly-pkg install %s' % pkg)
+    return rc == 0, 'установлен %s' % pkg if rc == 0 else 'пакет %s не найден/не поставился' % pkg
+
+
+def fix_dir(m):
+    p = m.group(1)
+    if not p.startswith(('/var/', '/run/', '/tmp/', '/root/.cache/', '/root/.config/', '/root/.local/')) or '..' in p:
+        return False, 'путь %s вне безопасных каталогов' % p
+    if '.' in os.path.basename(p): p = os.path.dirname(p)
+    sh('mkdir -p %s' % p); return True, 'создан каталог %s' % p
+
+
+def fix_lib(m):
+    sys.path[:0] = ['/usr/local/lib/rembly']
+    try:
+        import rembly_heal
+        h = rembly_heal.Healer(log=lambda s: None)
+        if h.fix_library(m.group(1)): return True, 'библиотека %s доступна' % m.group(1)
+    except Exception as e:
+        return False, str(e)
+    if online():
+        rc, out = sh("apt-file search -l %s 2>/dev/null | head -1" % m.group(1))
+        pk = out.strip().split()[-1] if rc == 0 and out.strip() else ''
+        if pk and re.match(r'^[a-z0-9.+-]+$', pk):
+            rc, _ = sh('rembly-pkg install %s' % pk); return rc == 0, 'поставлен %s' % pk
+    return False, 'библиотека %s не найдена' % m.group(1)
+
+
+def fix_space(m):
+    rc, out = sh('rembly-clean'); return rc == 0, 'место очищено (кэши и логи)'
+
+
+def fix_dpkg(m):
+    rc, _ = sh('dpkg --configure -a'); rc2, _ = sh('apt-get -f install -y') if online() else (0, '')
+    return rc == 0 and rc2 == 0, 'пакетная база восстановлена'
+
+
+def fix_lock(m):
+    if subprocess.run('pgrep -x "apt|apt-get|dpkg"', shell=True, capture_output=True).returncode == 0:
+        return False, 'apt ещё работает, подожду'
+    sh('rm -f /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock; dpkg --configure -a')
+    return True, 'снята зависшая блокировка apt'
+
+
+def fix_time(m):
+    rc, out = sh('/etc/rembly/rc.d/03-time.sh'); return rc == 0, 'время восстановлено из последней отметки'
+
+
+def fix_dns(m):
+    if not online(): return False, 'нет маршрута в сеть: сначала Wi-Fi'
+    sh("printf 'nameserver 1.1.1.1\\nnameserver 9.9.9.9\\n' > /etc/resolv.conf"); return True, 'DNS: 1.1.1.1 и 9.9.9.9'
+
+
+def fix_locale(m):
+    sh('locale-gen en_US.UTF-8 ru_RU.UTF-8 >/dev/null 2>&1; update-locale LANG=ru_RU.UTF-8'); return True, 'локали пересозданы'
+
+
+def fix_oom(m):
+    sh('rembly-clean >/dev/null 2>&1; rembly-eco on 2>/dev/null'); return True, 'память освобождена, включён экономный режим'
+
+
+def fix_shell(m):
+    if subprocess.run('pgrep -f "[r]embly-shell"', shell=True, capture_output=True).returncode == 0: return True, 'оболочка жива'
+    sh('rembly-restart-shell'); return True, 'оболочка перезапущена'
+
+
+def fix_x(m):
+    sh('rm -f /tmp/.X0-lock /tmp/.X11-unix/X0'); return True, 'убраны зависшие файлы X-сервера'
+
+
+def fix_appimage(m):
+    sh('rembly-nosandbox >/dev/null 2>&1'); return True, 'включён режим без песочницы / FUSE-обход для AppImage'
+
+
+def fix_wifi(m):
+    rc, out = sh('rembly-net heal', 600); return rc == 0, 'самолечение Wi-Fi: ' + (out.strip().splitlines() or [''])[-1]
+
+def fix_ro(m):
+    rc, out = sh('mount -o remount,rw / 2>&1')
+    return rc == 0, 'корневая ФС снова доступна для записи' if rc == 0 else 'не удалось remount rw (возможна ошибка ФС: проверьте eMMC/питание)'
+
+
+def fix_apt_lists(m):
+    if not online(): return False, 'нужна сеть для apt update'
+    sh('rm -rf /var/lib/apt/lists/*'); rc, _ = sh('rembly-pkg update'); return rc == 0, 'списки пакетов обновлены'
+
+
+def fix_sound(m):
+    sh('alsactl init >/dev/null 2>&1; /etc/rembly/rc.d/15-audio.sh >/dev/null 2>&1'); return True, 'звук переинициализирован'
+
+
+def fix_wlan(m):
+    rc, out = sh('rembly-net auto', 600); return rc == 0, 'повторный подъём сети'
+
+
+def fix_display(m):
+    if os.environ.get('DISPLAY'): return False, 'DISPLAY уже задан'
+    return False, 'X-сервер не запущен: перезапуск сессии (rembly-restart-shell) после выхода из программы'
+
+
+def fix_inode(m):
+    rc, _ = sh('rembly-clean'); return rc == 0, 'inode освобождены'
+
+
+def fix_perm(m):
+    p = m.group(1)
+    if not p.startswith(('/root/', '/tmp/', '/run/rembly/', '/var/log/')) or '..' in p: return False, 'путь %s вне безопасных каталогов' % p
+    sh('chmod u+rwX %s' % p); return True, 'права на %s исправлены' % p
+
+
+def fix_gtkcache(m):
+    sh('gtk-update-icon-cache -f -t /usr/share/icons/Papirus-Dark >/dev/null 2>&1; glib-compile-schemas /usr/share/glib-2.0/schemas; update-desktop-database >/dev/null 2>&1')
+    return True, 'кэши иконок/схем/приложений пересобраны'
+
+
+RULES = [  # (name, regex, fix)
+    ('python-модуль', re.compile(r"ModuleNotFoundError: No module named '([\w.]+)'"), fix_pymod),
+    ('нет каталога', re.compile(r"(?:FileNotFoundError|No such file or directory)[^\n]*?'(/[^']+)'"), fix_dir),
+    ('нет библиотеки', re.compile(r'error while loading shared libraries: (\S+\.so[\w.]*)'), fix_lib),
+    ('нет места', re.compile(r'No space left on device|\[Errno 28\]'), fix_space),
+    ('dpkg прерван', re.compile(r'dpkg was interrupted|E: Unmet dependencies|dpkg: error processing'), fix_dpkg),
+    ('apt занят', re.compile(r'Could not get lock /var/lib/(?:dpkg|apt)'), fix_lock),
+    ('часы', re.compile(r'certificate is not yet valid|Release file .* is not valid yet'), fix_time),
+    ('DNS', re.compile(r'Temporary failure in name resolution|Could not resolve host'), fix_dns),
+    ('локаль', re.compile(r'Setting locale failed|locale\.Error: unsupported locale'), fix_locale),
+    ('память', re.compile(r'MemoryError|Out of memory: Killed|Cannot allocate memory'), fix_oom),
+    ('оболочка', re.compile(r'rembly-shell.*(?:Traceback|crashed|segfault)', re.S), fix_shell),
+    ('X-сервер', re.compile(r'Server is already active for display|Cannot establish any listening sockets'), fix_x),
+    ('AppImage/FUSE', re.compile(r'fusermount|FUSE|dlopen\(\): error loading libfuse|Cannot mount AppImage'), fix_appimage),
+    ('ФС только для чтения', re.compile(r'Read-only file system|Remounting filesystem read-only'), fix_ro),
+    ('списки apt', re.compile(r'Hash Sum mismatch|Unable to locate package|Release file for .* has no|Some index files failed to download|File has unexpected size'), fix_apt_lists),
+    ('звук', re.compile(r'no soundcards found|ALSA lib .* (?:cannot find card|No such device)|Cannot open audio device'), fix_sound),
+    ('нет wlan0', re.compile(r'Cannot find device "wlan0"|wlan0: No such device|nl80211.*not found'), fix_wlan),
+    ('нет дисплея', re.compile(r'cannot open display|Can\'t open display|Unable to init server'), fix_display),
+    ('inode', re.compile(r'No inodes left|inodes? exhausted'), fix_inode),
+    ('права', re.compile(r"PermissionError: \[Errno 13\][^\n]*'(/[^']+)'"), fix_perm),
+    ('кэш GTK/иконок', re.compile(r'Failed to load (?:icon|theme)|GLib-GIO-ERROR: Settings schema|No such schema|icon-theme\.cache'), fix_gtkcache),
+    ('Wi-Fi прошивка', re.compile(r'Direct firmware load for \S+ failed|wmt_launcher.*(?:fail|not found)', re.I), fix_wifi),
+]
+
+
+def load_state():
+    try: return json.load(open(STATE))
+    except Exception: return {}
+
+
+def save_state(s):
+    try:
+        os.makedirs(os.path.dirname(STATE), exist_ok=True); json.dump(s, open(STATE, 'w'))
+    except OSError: pass
+
+
+def new_text():
+    """Only the part of every log that appeared since the last run (so one error is handled once)."""
+    st, txt = load_state(), ''
+    for p in LOGS:
+        try: size = os.path.getsize(p)
+        except OSError: continue
+        off = st.get(p, 0)
+        if size < off: off = 0
+        if size > off:
+            with open(p, errors='replace') as f:
+                f.seek(max(off, size - 200000)); txt += f.read()
+        st[p] = size
+    if not st.get('dmesg_done'):                       # the kernel ring buffer has no offsets: read it once per boot
+        st['dmesg_done'] = 1
+        try: txt += subprocess.run('dmesg 2>/dev/null | tail -300', shell=True, capture_output=True, text=True).stdout
+        except Exception: pass
+    if not DRY: save_state(st)
+    return txt
+
+
+def health_text():
+    """Problems visible right now without any log."""
+    t = ''
+    if subprocess.run('df -m --output=avail / | tail -1', shell=True, capture_output=True, text=True).stdout.strip().isdigit():
+        free = int(subprocess.run('df -m --output=avail / | tail -1', shell=True, capture_output=True, text=True).stdout)
+        if free < 150: t += 'No space left on device\n'
+    if os.path.exists('/var/lib/dpkg/updates') and os.listdir('/var/lib/dpkg/updates'): t += 'dpkg was interrupted\n'
+    return t
+
+
+def run_once(use_ai=False):
+    txt = new_text() + health_text()
+    crash_loop()
+    done, unknown = [], []
+    for name, rx, fix in RULES:
+        seen = set()
+        for m in list(rx.finditer(txt))[:5]:                 # several different paths/modules of one kind, at most 5 per run
+            key = m.group(1) if m.groups() else ''
+            if key in seen: continue
+            seen.add(key)
+            ok, what = fix(m)
+            log('%s %s: %s' % ('ИСПРАВЛЕНО' if ok else 'НЕ УДАЛОСЬ', name, what)); done.append((name, ok))
+    if not done and re.search(r'Traceback \(most recent call last\)|\bsegfault\b|Segmentation fault', txt):
+        unknown.append(txt[-3000:])
+        log('Неизвестная ошибка (в таблице правил её нет).')
+        if use_ai:
+            rc = subprocess.run(['rembly-ai', 'explain', '--stdin'], input=unknown[-1], text=True).returncode
+    return done, unknown
+
+
+def crash_loop():
+    """The shell / any rembly program crashing 3+ times within 5 minutes -> SAFE MODE: no animations, battery saver, so the UI can stay up."""
+    try: t = open(os.environ.get('REMBLY_CRASH_LOG', '/var/log/rembly-crash.log'), errors='replace').read()[-60000:]
+    except OSError: return False
+    now, n = time.time(), 0
+    for m in re.finditer(r'==== (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) rembly-(?:shell|desktop|settings|store|netui)', t):
+        try:
+            if now - time.mktime(time.strptime(m.group(1), '%Y-%m-%d %H:%M:%S')) < 300: n += 1
+        except ValueError: pass
+    flag = '/run/rembly/safemode'
+    if n >= 3 and not os.path.exists(flag):
+        if not DRY:
+            os.makedirs('/run/rembly', exist_ok=True); open(flag, 'w').close()
+            cfg = os.path.expanduser('~/.config/rembly'); os.makedirs(cfg, exist_ok=True); open(cfg + '/motion', 'w').write('off')
+            sh('rembly-eco on')
+        log('БЕЗОПАСНЫЙ РЕЖИМ: %d сбоев интерфейса за 5 минут -> анимации выключены, включена экономия. Вернуть: Настройки -> Экран -> Анимации.' % n)
+        return True
+    return False
+
+
+def history():
+    try: print(''.join(open(HIST, errors='replace').readlines()[-60:]) or 'Журнал пуст.')
+    except OSError: print('Журнал пуст.')
+
+
+def notify(done):
+    fixed = [n for n, ok in done if ok]
+    if fixed and not DRY:
+        subprocess.Popen(['notify-send', 'Rembly Doctor', 'Исправлено: ' + ', '.join(fixed)], stderr=subprocess.DEVNULL)
+
+
+def main():
+    if 'history' in sys.argv: return history() or 0
+    if 'watch' in sys.argv:
+        os.nice(15)
+        tick = 0
+        while True:
+            tick += 1
+            if tick % 1440 == 30 and online():                  # about once a day, 30 min after start: only LOOK for a new version, never install by itself
+                rc, out = sh('rembly-update --check', 120)
+                if 'Update available' in out: subprocess.Popen(['notify-send', 'Доступно обновление Rembly', 'Настройки -> Обновить, или команда: rembly-update'], stderr=subprocess.DEVNULL)
+            if tick % 10 == 5 and online() and subprocess.run(['rembly-autosetup', '--pending']).returncode == 0 \
+               and subprocess.run('pgrep -f "[r]embly-autosetup"', shell=True, capture_output=True).returncode != 0:
+                subprocess.Popen(['rembly-autosetup'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)     # first-boot setup waited for the network
+            if tick % 10080 == 60 and open('/proc/loadavg').read().split()[0] < '0.5':                          # about weekly, only when the tablet is idle
+                sh('rembly-optimize --quiet')
+            try: notify(run_once()[0])
+            except Exception as e: log('doctor: %s' % e)
+            time.sleep(60)
+    done, unk = run_once('--ai' in sys.argv)
+    if not done and not unk: print('Проблем не найдено.')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

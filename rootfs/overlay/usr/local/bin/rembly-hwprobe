@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+"""rembly-hwprobe - measure THIS tablet and derive its settings from the measurements (nothing is guessed from the model name).
+
+  rembly-hwprobe            human readable report: what was measured, what the A73 profile expects, verdict
+  rembly-hwprobe --json     same as JSON
+  rembly-hwprobe --apply    write /etc/rembly/device.conf (+ DPI in display.conf) from the measurements. Runs at every boot (rc.d/04-device.sh).
+
+Strictness: every derived value is range-checked; a value outside its sane range is NOT applied (the default stays) and the reason is printed.
+On a device that is not an MT6737M/800x1280 tablet only generic, hardware-independent values (RAM based) are applied."""
+import glob, json, os, re, subprocess, sys
+
+DEV = os.environ.get('REMBLY_DEVICE_CONF', '/etc/rembly/device.conf')
+DISP = os.environ.get('REMBLY_DISPLAY_CONF', '/etc/rembly/display.conf')
+ROOT = os.environ.get('REMBLY_PROBE_ROOT', '')
+sys.path[:0] = ['/usr/local/lib/rembly', os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'lib', 'rembly')]
+
+# What the A73 (MT6737M / K37MV1_BSP) is known to be, from the stock kernel config and boot image.
+PROFILE = {'soc': 'MT6737', 'kernel': '3.18', 'fb': (800, 1280), 'ram_mb': (1500, 4200), 'panel_mm': (217, 136)}
+
+
+def rd(p, d=''):
+    try: return open(ROOT + p, errors='replace').read().strip()
+    except OSError: return d
+
+
+def probe():
+    m = {}
+    ci = rd('/proc/cpuinfo'); hw = re.search(r'^Hardware\s*:\s*(.+)$', ci, re.M)
+    dtm = rd('/proc/device-tree/model').replace('\0', ''); dtc = rd('/proc/device-tree/compatible').replace('\0', ' ')
+    m['soc_text'] = ' | '.join(x for x in (hw.group(1) if hw else '', dtm, dtc) if x)
+    m['kernel'] = rd('/proc/sys/kernel/osrelease')
+    mi = {l.split(':')[0]: int(l.split()[1]) for l in rd('/proc/meminfo').splitlines() if ':' in l and len(l.split()) > 1}
+    m['ram_mb'] = mi.get('MemTotal', 0) // 1024                       # usable by the system (what zram/min_free are derived from)
+    try:
+        import rembly_ram                                            # physical RAM from iomem / device tree / boot log, never from a bootloader claim
+        rm = rembly_ram.measure() if not ROOT else {'physical_mb': m['ram_mb'], 'sources': {}}
+        m['ram_phys_mb'], m['ram_sources'] = rm['physical_mb'], rm['sources']
+    except Exception:
+        m['ram_phys_mb'], m['ram_sources'] = m['ram_mb'], {}
+    m['cores'] = len(re.findall(r'^processor\s*:', ci, re.M)) or (os.cpu_count() or 0)
+    vs = rd('/sys/class/graphics/fb0/virtual_size').split(','); st = rd('/sys/class/graphics/fb0/stride'); bpp = rd('/sys/class/graphics/fb0/bits_per_pixel')
+    virt = (int(vs[0]), int(vs[1])) if len(vs) == 2 and all(v.isdigit() for v in vs) else None
+    mo = re.search(r'(\d+)x(\d+)', rd('/sys/class/graphics/fb0/modes'))            # the VISIBLE mode (virtual_size is often 2x taller: double buffering)
+    if mo: m['fb'] = (int(mo.group(1)), int(mo.group(2)))
+    elif virt and virt[1] % 2 == 0 and virt[1] // 2 >= virt[0]: m['fb'] = (virt[0], virt[1] // 2)
+    else: m['fb'] = virt
+    m['fb_virtual'] = virt
+    m['fb_bpp'] = int(bpp) if bpp.isdigit() else None; m['fb_stride'] = int(st) if st.isdigit() else None
+    bl = sorted(glob.glob(ROOT + '/sys/class/backlight/*'))
+    m['backlight'] = bl[0][len(ROOT):] if bl else None
+    m['backlight_max'] = int(rd(m['backlight'] + '/max_brightness', '0') or 0) if bl else 0
+    g = rd('/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors'); m['governors'] = g.split()
+    m['freq_max_khz'] = int(rd('/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq', '0') or 0)
+    m['thermal_zones'] = len(glob.glob(ROOT + '/sys/class/thermal/thermal_zone*'))
+    m['battery'] = any(rd(d[len(ROOT):] + '/type') == 'Battery' for d in glob.glob(ROOT + '/sys/class/power_supply/*'))
+    try:
+        import rembly_touch
+        t = rembly_touch.find() if not ROOT else None
+        m['touch'] = {'dev': t[0], 'name': t[1], 'range': rembly_touch.ranges(t[0])} if t else None
+    except Exception:
+        m['touch'] = None
+    try:
+        sv = os.statvfs(ROOT + '/'); m['root_total_mb'] = sv.f_blocks * sv.f_frsize // 1048576; m['root_free_mb'] = sv.f_bavail * sv.f_frsize // 1048576
+    except OSError: m['root_total_mb'] = m['root_free_mb'] = 0
+    return m
+
+
+def verdict(m):
+    notes, score = [], 0
+    if PROFILE['soc'] in m['soc_text'].replace(' ', '').upper() or PROFILE['soc'] in m['soc_text']: score += 1; notes.append('SoC: matches %s' % PROFILE['soc'])
+    else: notes.append('SoC: "%s" is not %s' % (m['soc_text'] or 'unknown', PROFILE['soc']))
+    if m['kernel'].startswith(PROFILE['kernel']): notes.append('kernel %s: as expected' % m['kernel'])
+    else: notes.append('kernel %s differs from the stock %s.x the drivers were written for' % (m['kernel'] or '?', PROFILE['kernel']))
+    if m['fb'] and tuple(sorted(m['fb'])) == tuple(sorted(PROFILE['fb'])): score += 1; notes.append('panel %dx%d: matches' % m['fb'])
+    else: notes.append('panel %s: expected %dx%d' % (m['fb'], *PROFILE['fb']))
+    lo, hi = PROFILE['ram_mb']
+    if lo <= m['ram_mb'] <= hi: score += 1; notes.append('RAM %d MB: in the expected range' % m['ram_mb'])
+    else: notes.append('RAM %d MB: outside %d-%d' % (m['ram_mb'], lo, hi))
+    return ('match' if score >= 3 else 'partial' if score == 2 else 'unknown'), notes
+
+
+def clamp(v, lo, hi): return max(lo, min(hi, v))
+
+
+def derive(m, v):
+    d, why = {}, []
+    ram_kb = m['ram_mb'] * 1024
+    if m['ram_mb'] >= 256:
+        d['ZRAM_PCT'] = 75 if m['ram_mb'] < 1536 else 70 if m['ram_mb'] < 3072 else 50
+        d['MIN_FREE_KB'] = clamp(ram_kb * 8 // 1000, 8192, 65536)
+        d['TMP_MB'] = clamp(m['ram_mb'] * 6 // 100, 64, 256)
+    else: why.append('RAM %d MB looks wrong: memory tuning skipped' % m['ram_mb'])
+    if v in ('match', 'partial'):
+        if m['fb']:
+            w, h = max(m['fb']), min(m['fb']); mm = max(PROFILE['panel_mm'])
+            dpi = round(w / (mm / 25.4))
+            if 100 <= dpi <= 260: d['DPI'] = dpi
+            else: why.append('computed DPI %d is outside 100-260: kept the default' % dpi)
+        if m['backlight'] and m['backlight_max'] > 0:
+            d['BL_PATH'] = m['backlight']; d['BL_MAX'] = m['backlight_max']; d['BL_DEFAULT'] = clamp(m['backlight_max'] * 6 // 10, 1, m['backlight_max'])
+        for g in ('interactive', 'schedutil', 'ondemand'):
+            if g in m['governors']: d['GOV_DEFAULT'] = g; break
+        if m['thermal_zones']: d['THERMAL_ZONES'] = m['thermal_zones']
+        if m['touch'] and m['touch'].get('range'): d['TOUCH_DEV'] = m['touch']['dev']; d['TOUCH_RANGE'] = '%dx%d' % m['touch']['range']
+        d['CORES'] = m['cores']
+    else:
+        why.append('not the A73: only RAM-based (hardware independent) values are applied')
+    return d, why
+
+
+def apply(d, v, m):
+    os.makedirs(os.path.dirname(DEV), exist_ok=True)
+    body = ['# written by rembly-hwprobe at every boot from the measured hardware; do not edit', 'DEVICE_MATCH=%s' % v, 'RAM_MB=%d' % m['ram_mb'], 'RAM_PHYS_MB=%d' % m['ram_phys_mb'], 'KERNEL=%s' % m['kernel']]
+    body += ['%s=%s' % (k, d[k]) for k in sorted(d) if k != 'DPI']
+    tmp = DEV + '.new'; open(tmp, 'w').write('\n'.join(body) + '\n'); os.replace(tmp, DEV)
+    if 'DPI' in d:                                                           # never override a DPI the user set by hand
+        try: lines = open(DISP).read().splitlines()
+        except OSError: lines = []
+        txt = '\n'.join(lines)
+        if 'DPI_USER=1' not in txt:
+            lines = [l for l in lines if not l.startswith(('DPI=', 'DPI_AUTO='))] + ['DPI=%d' % d['DPI'], 'DPI_AUTO=1']
+            open(DISP, 'w').write('\n'.join(l for l in lines if l) + '\n')
+
+
+def main():
+    m = probe(); v, notes = verdict(m); d, why = derive(m, v)
+    if '--apply' in sys.argv:
+        apply(d, v, m)
+        if '--quiet' not in sys.argv: print('device: %s; applied: %s' % (v, ' '.join('%s=%s' % kv for kv in sorted(d.items()))))
+        for w in why: print('note: ' + w)
+        return 0 if v != 'unknown' else 3
+    if '--json' in sys.argv:
+        print(json.dumps({'measured': m, 'verdict': v, 'notes': notes, 'derived': d, 'skipped': why}, indent=1, default=str)); return 0
+    print('== Измерено на этом планшете'); [print('  %-14s %s' % (k, m[k])) for k in sorted(m)]
+    print('\n== Сравнение с профилем A73 (MT6737M)'); [print('  ' + n) for n in notes]; print('  Вердикт: %s' % v)
+    print('\n== Выведенные настройки'); [print('  %s=%s' % kv) for kv in sorted(d.items())]; [print('  note: ' + w) for w in why]
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

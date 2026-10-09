@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+"""Rembly Store: curated + searchable apt front-end (needs network). Installs with --no-install-recommends."""
+import os, subprocess, sys, threading
+sys.path[:0] = ['/usr/local/lib/rembly', os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'lib', 'rembly')]
+import remblyui as ui
+from remblyui import *
+
+# (package, title, note, heavy)
+CATALOG = {
+ 'Интернет': [('epiphany-browser', 'Epiphany (WebKit)', 'Современный браузер, тяжелее NetSurf', True), ('falkon', 'Falkon', 'Лёгкий Qt-браузер', True),
+              ('transmission-gtk', 'Transmission', 'Торрент-клиент', False), ('thunderbird', 'Thunderbird', 'Почта', True), ('filezilla', 'FileZilla', 'FTP/SFTP', False)],
+ 'Офис': [('abiword', 'AbiWord', 'Текстовый редактор', False), ('gnumeric', 'Gnumeric', 'Таблицы', False), ('evince', 'Evince', 'Просмотр PDF/DjVu', False),
+          ('libreoffice-writer', 'LibreOffice Writer', 'Очень тяжёлый для этого планшета', True)],
+ 'Разработка': [('vim', 'Vim', 'Редактор', False), ('neovim', 'Neovim', 'Редактор', False), ('emacs-nox', 'Emacs (консоль)', '', False), ('clang', 'Clang/LLVM', 'Компилятор', False),
+                ('golang-go', 'Go', 'Язык Go', False), ('rustc', 'Rust', 'Rust + cargo', True), ('default-jdk', 'Java JDK', 'Тяжёлый', True), ('php-cli', 'PHP', '', False),
+                ('sqlite3', 'SQLite', 'База данных', False), ('python3-numpy', 'NumPy', '', False), ('jupyter-notebook', 'Jupyter', 'Тяжёлый', True), ('meld', 'Meld', 'Сравнение файлов', False)],
+ 'Мультимедиа': [('vlc', 'VLC', 'Видеоплеер (тяжёлый без GPU)', True), ('cmus', 'cmus', 'Музыка в консоли', False), ('ffmpeg', 'FFmpeg', 'Конвертер', False),
+                 ('audacity', 'Audacity', 'Аудиоредактор', True), ('yt-dlp', 'yt-dlp', 'Загрузка видео', False)],
+ 'Графика': [('gimp', 'GIMP', 'Очень тяжёлый для 2 ГБ ОЗУ', True), ('inkscape', 'Inkscape', 'Тяжёлый', True), ('mypaint', 'MyPaint', 'Рисование пером/пальцем', True), ('viewnior', 'Viewnior', 'Просмотр фото', False)],
+ 'Игры': [('gnome-sudoku', 'Судоку', '', False), ('gnome-mines', 'Сапёр', '', False), ('aisleriot', 'Пасьянсы', '', False), ('supertux', 'SuperTux', 'Платформер', True), ('gnome-chess', 'Шахматы', '', False)],
+ 'Утилиты': [('mc', 'Midnight Commander', 'Файловый менеджер в консоли', False), ('ncdu', 'ncdu', 'Что занимает место', False), ('bleachbit', 'BleachBit', 'Очистка', False),
+             ('gparted', 'GParted', 'Разделы (осторожно!)', False), ('tmux', 'tmux', '', False), ('ranger', 'ranger', '', False), ('cheese', 'Cheese', 'Камера', False)],
+}
+
+
+def installed(pkg):
+    return subprocess.run(['dpkg-query', '-W', '-f=${Status}', pkg], capture_output=True, text=True).stdout.endswith('installed')
+
+
+class Store(Gtk.Window):
+    def __init__(self):
+        super().__init__(title='Магазин Rembly'); self.set_default_size(1000, 680); self.set_position(Gtk.WindowPosition.CENTER)
+        ui.style_app(self)
+        v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6); v.set_border_width(10); self.add(v)
+        top = Gtk.Box(spacing=8); self.q = Gtk.SearchEntry(); self.q.set_placeholder_text('Поиск по всем пакетам Ubuntu')
+        self.q.connect('activate', lambda *_: self.search()); self.q.connect('focus-in-event', lambda *_: osk(True))
+        sb = Gtk.Button(label='Найти'); sb.connect('clicked', lambda _b: self.search()); ub = Gtk.Button(label='Обновить списки'); ub.connect('clicked', lambda _b: self.apt('update', ''))
+        fb_ = Gtk.FileChooserButton(title='Установить из файла (.deb / .AppImage)', action=Gtk.FileChooserAction.OPEN); fb_.set_size_request(250, -1)
+        flt = Gtk.FileFilter(); flt.set_name('Программы (.deb, .AppImage)'); [flt.add_pattern(x) for x in ('*.deb', '*.AppImage', '*.appimage')]; fb_.add_filter(flt)
+        fb_.connect('file-set', lambda w: ui.sh('xfce4-terminal --hold --title=Установка -e "rembly-install \'%s\'"' % w.get_filename().replace("'", '')))
+        top.pack_start(self.q, True, True, 0); top.pack_start(sb, False, False, 0); top.pack_start(ub, False, False, 0); top.pack_start(fb_, False, False, 0); v.pack_start(top, False, False, 0)
+        nb = Gtk.Notebook(); nb.set_tab_pos(Gtk.PositionType.LEFT); v.pack_start(nb, True, True, 0); self.lists = {}
+        for cat, items in CATALOG.items():
+            lb = Gtk.ListBox(); lb.set_selection_mode(Gtk.SelectionMode.NONE); sc = Gtk.ScrolledWindow(); sc.add(lb); nb.append_page(sc, Gtk.Label(label=cat)); self.lists[cat] = lb
+            for pkg, title, note, heavy in items: lb.add(self.card(pkg, title, note, heavy))
+        self.res = Gtk.ListBox(); self.res.set_selection_mode(Gtk.SelectionMode.NONE); rs = Gtk.ScrolledWindow(); rs.add(self.res); nb.append_page(rs, Gtk.Label(label='Результаты поиска'))
+        self.nb = nb; self.log = Gtk.TextView(); self.log.set_editable(False); self.log.set_monospace(True)
+        ls = Gtk.ScrolledWindow(); ls.set_size_request(-1, 150); ls.add(self.log); v.pack_start(ls, False, False, 0)
+        self.show_all()
+
+    def card(self, pkg, title, note, heavy):
+        r = Gtk.ListBoxRow(); h = Gtk.Box(spacing=12); h.set_border_width(10)
+        c = Gtk.Box(orientation=Gtk.Orientation.VERTICAL); t = Gtk.Label(label=title + ('   ⚠ тяжёлое' if heavy else ''), xalign=0); t.get_style_context().add_class('name')
+        n = Gtk.Label(label='%s — %s' % (pkg, note), xalign=0); n.get_style_context().add_class('small'); c.pack_start(t, False, False, 0); c.pack_start(n, False, False, 0)
+        b = Gtk.Button(label='Удалить' if installed(pkg) else 'Установить'); b.set_size_request(150, 44)
+        b.connect('clicked', lambda w, p=pkg: self.toggle(w, p)); h.pack_start(c, True, True, 0); h.pack_end(b, False, False, 0); r.add(h); return r
+
+    def toggle(self, w, pkg):
+        rm = installed(pkg); w.set_sensitive(False); w.set_label('Подождите…')
+        def done(): GLib.idle_add(lambda: (w.set_label('Удалить' if installed(pkg) else 'Установить'), w.set_sensitive(True)))
+        self.apt('remove --purge' if rm else 'install', pkg, done)
+
+    def apt(self, verb, pkg, cb=None):
+        def w():
+            action = {'install': 'install', 'remove --purge': 'remove', 'update': 'update'}.get(verb, verb)
+            cmd = 'rembly-pkg %s %s 2>&1' % (action, pkg)          # checks free space first, quiet apt settings
+            p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, text=True)
+            for line in p.stdout: GLib.idle_add(self.append, line)
+            p.wait(); GLib.idle_add(self.append, '== готово (код %d)\n' % p.returncode); cb and cb()
+        threading.Thread(target=w, daemon=True).start()
+
+    def append(self, s):
+        b = self.log.get_buffer(); b.insert(b.get_end_iter(), s); self.log.scroll_to_iter(b.get_end_iter(), 0, False, 0, 0)
+
+    def search(self):
+        q = self.q.get_text().strip()
+        if not q: return
+        for c in self.res.get_children(): self.res.remove(c)
+        def w():
+            lines = subprocess.run(['apt-cache', 'search', q], capture_output=True, text=True).stdout.splitlines()[:60]
+            def fill():
+                for l in lines:
+                    pkg, _, desc = l.partition(' - '); self.res.add(self.card(pkg, pkg, desc[:90], False))
+                self.res.show_all(); self.nb.set_current_page(len(CATALOG))
+            GLib.idle_add(fill)
+        threading.Thread(target=w, daemon=True).start()
+
+
+if __name__ == '__main__':
+    ui.init_theme(); w = Store(); w.connect('destroy', Gtk.main_quit); Gtk.main()

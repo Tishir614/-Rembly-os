@@ -1,0 +1,25 @@
+#!/usr/bin/env python3
+"""rembly-ramtest - how much RAM does this tablet REALLY have? Measured from the kernel and verified by a pattern test, not taken from fastboot,
+the bootloader or a spec sheet (those may report wrong numbers).
+  rembly-ramtest                quick check (tests up to 128 MB of free RAM, a few seconds)
+  rembly-ramtest --full         tests up to 70% of free RAM (minutes; close other programs first)
+  rembly-ramtest --claim MB     compare with a number someone claims (fastboot, box, shop): e.g. --claim 2048
+  rembly-ramtest --json         machine readable (used by rembly-autosetup / rembly-report)
+Exit: 0 ok/warn, 2 claim mismatch, 3 pattern test failed."""
+import json, os, sys
+sys.path[:0] = ['/usr/local/lib/rembly', os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'lib', 'rembly')]
+import rembly_ram as rr
+a = sys.argv[1:]
+claim = int(a[a.index('--claim') + 1]) if '--claim' in a else None
+r = rr.check(claim_mb=claim, full='--full' in a)
+try:
+    os.makedirs('/var/lib/rembly', exist_ok=True); json.dump(r, open('/var/lib/rembly/ramtest.json', 'w'), indent=1)
+except OSError: pass                      # read-only system: the result is still printed
+if '--json' in a: print(json.dumps(r, indent=1)); sys.exit({'ok': 0, 'warn': 0, 'mismatch': 2, 'FAIL': 3}[r['verdict']])
+m = r['measured']
+print('Доступно системе:   %d МБ' % m['usable_mb']); print('Физически (ядро):   %d МБ   (зарезервировано под модем/графику/ядро: %d МБ)' % (m['physical_mb'], m['reserved_mb']))
+print('Источники:          %s' % (', '.join('%s=%d МБ' % kv for kv in sorted(m['sources'].items())) or 'нет данных (запустите от root)'))
+if r['test']: t = r['test']; print('Проверка памяти:    %d МБ, %d страниц, плохих %d, наложений %d, %.1f с' % (t['tested_mb'], t['pages'], t['bad_pages'], t['aliased_pages'], t['seconds']))
+for n in r['notes']: print('! ' + n)
+print('Итог: ' + {'ok': 'память соответствует измерениям', 'warn': 'есть замечания (см. выше)', 'mismatch': 'заявленный объём не подтверждён', 'FAIL': 'ПРОВЕРКА ПАМЯТИ НЕ ПРОЙДЕНА'}[r['verdict']])
+sys.exit({'ok': 0, 'warn': 0, 'mismatch': 2, 'FAIL': 3}[r['verdict']])

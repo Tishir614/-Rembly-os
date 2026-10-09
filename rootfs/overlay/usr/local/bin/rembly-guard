@@ -1,0 +1,12 @@
+#!/bin/bash
+# rembly-guard CMD ARGS...  - run an application and, if it dies with an error or a signal (segfault, abort, kill),
+# write the end of its error output into /var/log/rembly-crash.log so that rembly-doctor / rembly-report can see it.
+E=$(mktemp /tmp/rembly-guard.XXXXXX) || exec "$@"
+"$@" 2> >(tee "$E" >&2)
+rc=$?
+sleep 0.2
+if [ "$rc" != 0 ] && [ "$rc" != 130 ] && [ "$rc" != 143 ]; then
+  { printf '\n==== %s %s (exit %s%s)\n' "$(date '+%F %T')" "$1" "$rc" "$([ "$rc" -gt 128 ] && echo ", signal $((rc-128))")"; tail -n 30 "$E"; } >> /var/log/rembly-crash.log 2>/dev/null
+  notify-send -u critical "Программа завершилась с ошибкой" "$(basename "$1") (код $rc). Rembly Doctor посмотрит." 2>/dev/null
+fi
+rm -f "$E"; exit $rc

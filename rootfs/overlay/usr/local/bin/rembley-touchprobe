@@ -1,3 +1,0 @@
-#!/bin/sh
-# Prints "device|name|mt|WxH" of the touchscreen found by capabilities, or exits 1. Used by rembley-session / xinitrc / selftest.
-exec python3 /usr/local/lib/rembley/rembley_touch.py "$@"

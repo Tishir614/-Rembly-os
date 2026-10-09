@@ -1,4 +1,4 @@
-# Установка Rembley OS на A73
+# Установка Rembly OS на A73
 
 Три способа, от самого безопасного к постоянной установке. Прошивать вы начинаете **сами**; скрипты ничего не делают без проверок и подтверждения.
 
@@ -10,25 +10,25 @@
 
 ## 1. Только проверить — ничего не пишется
 ```
-tools/flash-rembley.sh test --dir out
+tools/flash-rembly.sh test --dir out
 ```
-Делает `fastboot boot` и всё. Выключили питание — вернулся Android. Rootfs берётся с USB/SD (метка `REMBLEY` или файл `/rembley-rootfs.img`).
+Делает `fastboot boot` и всё. Выключили питание — вернулся Android. Rootfs берётся с USB/SD (метка `REMBLY` или файл `/rembly-rootfs.img`).
 
 ## 2. Установка прямо на планшете (самый простой способ, без fastboot-прошивки 3,5 ГБ)
-Загрузитесь способом 1 с флешки, затем **Настройки → Установка на планшет → «Установить во внутреннюю память»** (или `rembley-install-internal`).
-Копируется работающая система в раздел `userdata` (ext4, метка `REMBLEY`, на весь раздел сразу). Затёрт будет только `userdata`;
+Загрузитесь способом 1 с флешки, затем **Настройки → Установка на планшет → «Установить во внутреннюю память»** (или `rembly-install-internal`).
+Копируется работающая система в раздел `userdata` (ext4, метка `REMBLY`, на весь раздел сразу). Затёрт будет только `userdata`;
 `system`, `vendor`, `boot`, `nvram`, `nvdata`, `protect*`, `secro` не затрагиваются. Прогресс виден в окне; ~10–30 минут, держите зарядку.
 После этого флешка не нужна: `fastboot boot out/A73-linux-test.img` сам найдёт rootfs во внутренней памяти (внешние носители проверяются первыми).
 
 ## 3. Автоматическая прошивка (rootfs ставится сам)
 ```
 # Linux рядом с Android (двойная загрузка): образ в recovery, rootfs в userdata. Android грузится как раньше.
-tools/flash-rembley.sh install-recovery --dir out --backup-dir /home/tishir645/планшет
+tools/flash-rembly.sh install-recovery --dir out --backup-dir /home/tishir645/планшет
 
 # Linux вместо Android по умолчанию: образ в boot, rootfs в userdata (Android вернуть командой restore-android.sh)
-tools/flash-rembley.sh install-boot --dir out --backup-dir /home/tishir645/планшет
+tools/flash-rembly.sh install-boot --dir out --backup-dir /home/tishir645/планшет
 ```
-Скрипт сам: проверяет контрольные суммы образов и что это ext4 с меткой `REMBLEY`; проверяет оригинальный `boot.bin` в вашей копии;
+Скрипт сам: проверяет контрольные суммы образов и что это ext4 с меткой `REMBLY`; проверяет оригинальный `boot.bin` в вашей копии;
 проверяет что `product = K37MV1_BSP`, загрузчик разблокирован и rootfs помещается в `userdata`; показывает план и просит набрать `INSTALL`;
 затем `fastboot flash` и (для `install-boot`) перезагрузка. При первой загрузке файловая система сама **расширяется на весь раздел** (`01-expand.sh`).
 `--dry-run` покажет все команды, ничего не выполняя.
@@ -41,7 +41,7 @@ tools/flash-rembley.sh install-boot --dir out --backup-dir /home/tishir645/пл�
 
 ## Драйверы Wi-Fi при установке
 Отдельно скачивать ничего не нужно: при первом запуске (и перед установкой во внутреннюю память) система сама берёт файлы Wi-Fi из разделов Android на планшете
-(`rembley-drivers`, только чтение). Хотите вшить их в образ заранее: `ANDROID_DUMP=/home/tishir645/планшет sudo -E rootfs/build-rootfs.sh`.
+(`rembly-drivers`, только чтение). Хотите вшить их в образ заранее: `ANDROID_DUMP=/home/tishir645/планшет sudo -E rootfs/build-rootfs.sh`.
 Скрипт прошивки скажет, есть ли они в образе. Подробнее: `docs/NETWORK.md`.
 
 ## Откат на Android

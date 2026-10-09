@@ -1,0 +1,6 @@
+#!/bin/sh
+# usage: rembly-rotate cw|ccw|ud|none   (restarts X)
+case "$1" in cw|ccw|ud|none) ;; *) echo "usage: $0 cw|ccw|ud|none"; exit 1;; esac
+mkdir -p /etc/rembly; U=$(echo "$1" | tr a-z A-Z); [ "$U" = NONE ] && U=none
+sed -i '/^ROTATE=/d' /etc/rembly/display.conf 2>/dev/null; echo "ROTATE=$U" >> /etc/rembly/display.conf
+pkill -x Xorg

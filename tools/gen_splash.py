@@ -7,7 +7,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 W, H = 800, 1280
 OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'initramfs')
-LOGO = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'rootfs', 'overlay', 'usr', 'share', 'rembley', 'logo.png')   # fox + REMBLY OS wordmark (tools/gen_brand.py)
+LOGO = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'rootfs', 'overlay', 'usr', 'share', 'rembly', 'logo.png')   # fox + REMBLY OS wordmark (tools/gen_brand.py)
 def font(sz, bold=True):
     for p in glob.glob('/usr/share/fonts/**/NotoSans-%s.*tf' % ('Bold' if bold else 'Regular'), recursive=True) + glob.glob('/usr/share/fonts/**/DejaVuSans%s.ttf' % ('-Bold' if bold else ''), recursive=True):
         return ImageFont.truetype(p, sz)
@@ -45,7 +45,7 @@ for name, data in (('splash.32.gz', bgra), ('splash.16.gz', rgb565)):
 img.convert('RGB').save('/tmp/splash_preview.png') if os.path.isdir('/tmp') else None
 
 # ---- progress strips: rows TY-6 .. TY+TH+6 of the same picture, 9 steps (0..8) in both pixel formats ----
-BOOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'rootfs', 'overlay', 'usr', 'share', 'rembley', 'boot')
+BOOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'rootfs', 'overlay', 'usr', 'share', 'rembly', 'boot')
 os.makedirs(BOOT, exist_ok=True)
 Y0, Y1 = TY - 6, TY + TH + 6
 print('strip rows %d..%d (height %d)' % (Y0, Y1, Y1 - Y0))

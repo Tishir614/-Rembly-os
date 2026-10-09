@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Black-and-white wallpaper in the language of the fox logo: near-black ground, a huge ghost of the fox, thin concentric rings, a few razor lines.
-usage: tools/gen_wallpaper.py [OUT.png] [W H]    (put your own picture at ~/.config/rembley/wallpaper.png to replace it)"""
+usage: tools/gen_wallpaper.py [OUT.png] [W H]    (put your own picture at ~/.config/rembly/wallpaper.png to replace it)"""
 import os, sys, math, random
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, 'rootfs/overlay/usr/share/rembley/wallpaper.png')
+OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, 'rootfs/overlay/usr/share/rembly/wallpaper.png')
 W, H = (int(sys.argv[2]), int(sys.argv[3])) if len(sys.argv) > 3 else (1920, 1200)
 rnd = random.Random(11)
 y, x = np.mgrid[0:H, 0:W].astype(np.float32)

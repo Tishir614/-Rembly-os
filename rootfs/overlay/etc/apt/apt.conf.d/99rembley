@@ -1,8 +1,0 @@
-// Rembley: small, quiet, safe package management on a 2 GB tablet
-APT::Install-Recommends "false";
-APT::Install-Suggests "false";
-Acquire::Languages "none";
-Acquire::PDiffs "false";
-Acquire::http::Timeout "30";
-Dpkg::Options { "--force-confdef"; "--force-confold"; };
-DPkg::Post-Invoke { "update-desktop-database /usr/share/applications 2>/dev/null || true"; };

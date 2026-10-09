@@ -1,0 +1,3 @@
+#!/bin/sh
+# Re-exec the desktop shell (reloads wallpaper/name/city). SIGHUP makes rembly-shell exec itself.
+kill -HUP $(pgrep -f '[r]embly-shell$') 2>/dev/null

@@ -1,0 +1,267 @@
+#!/bin/sh
+# Rembly networking for the A73 (MT6735 CONSYS Wi-Fi + USB networking). Needs the Android blobs extracted from YOUR
+# firmware (tools/make-blobs.sh) under /system and /vendor.
+#
+# SAFETY: this script never writes to eMMC. nvdata is mounted READ-ONLY (ro,noload) so the Wi-Fi driver can read the
+# stock calibration + MAC from /data/nvram/APCFG/APRDEB/WIFI. nvram/protect1/protect2/secro are never touched.
+# MAC addresses are never generated or hard-coded here.
+#
+# usage: rembly-net auto | wifi-up | wifi-down | wifi-scan | wifi-connect SSID [PSK] | wifi-status | mac
+#        rembly-net wifi-select SSID   (saved network)
+#        rembly-net usb-ppp on|off     (IP over USB: CDC-ACM serial + PPP, because the kernel has no RNDIS/ECM)
+#        rembly-net bt-up              (explains why Bluetooth is unavailable with this kernel)
+#        rembly-net preflight | debug | heal | nvdata | firmware | diag | modem-probe | modem-up | modem-down | status
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+CONF=/etc/wpa_supplicant/rembly.conf; IF=${WIFI_IF:-wlan0}
+SYSFS=${SYSFS:-/sys}
+[ -f /etc/rembly/net.conf ] && . /etc/rembly/net.conf
+log() { echo "[net] $*"; }
+RC_FILES=${RC_FILES:-"/vendor/etc/init/*.rc /vendor/etc/init/hw/*.rc /system/etc/init/*.rc /system/etc/init/hw/*.rc"}
+
+# ---- stock service command lines straight from Android's own init .rc files ----
+rc_args() {   # $1 = service name -> prints its arguments (everything after the binary path)
+  # shellcheck disable=SC2086
+  cat $RC_FILES 2>/dev/null | awk -v n="$1" '$1=="service" && $2==n {for(i=4;i<=NF;i++) printf "%s ", $i; print ""; exit}'
+}
+rc_has() { cat $RC_FILES 2>/dev/null | awk -v n="$1" '$1=="service" && $2==n {f=1} END{exit !f}'; }
+
+# ---- stock NVDATA (read-only): Wi-Fi/BT calibration and MAC live here ----
+nvdata() {
+  mountpoint -q /nvdata 2>/dev/null && { mkdir -p /data; [ -e /data/nvram ] || ln -sfn /nvdata /data/nvram; return 0; }
+  dev=""
+  for u in $SYSFS/class/block/*/uevent; do
+    grep -qx 'PARTNAME=nvdata' "$u" 2>/dev/null && { dev=/dev/$(basename "$(dirname "$u")"); break; }
+  done
+  [ -n "$dev" ] && [ -b "$dev" ] || { log "nvdata partition not found (no PARTNAME=nvdata in sysfs)"; return 1; }
+  mkdir -p /nvdata /data
+  mount -t ext4 -o ro,noload,noatime,nosuid,nodev "$dev" /nvdata 2>&1 || { log "could not mount $dev read-only"; return 1; }
+  [ -e /data/nvram ] || ln -sfn /nvdata /data/nvram
+  log "nvdata: $dev mounted read-only; WIFI calibration: $(ls /nvdata/APCFG/APRDEB/WIFI 2>/dev/null || echo 'file missing')"
+}
+
+fwdir() {
+  for d in /vendor/firmware /system/etc/firmware /vendor/etc/firmware /etc/firmware; do
+    ls "$d"/WMT_SOC.cfg "$d"/*[Ww][Mm][Tt]* >/dev/null 2>&1 && { echo "$d"; return; }
+  done
+  for d in /vendor/firmware /system/etc/firmware; do [ -d "$d" ] && { echo "$d"; return; }; done
+}
+firmware() {   # kernel request_firmware() looks in /etc/firmware, /vendor/firmware, /firmware/image
+  mkdir -p /etc/firmware /lib/firmware
+  for d in /vendor/firmware /system/etc/firmware /vendor/etc/firmware; do
+    [ -d "$d" ] && for f in "$d"/*; do [ -f "$f" ] && { ln -sf "$f" /etc/firmware/ 2>/dev/null; ln -sf "$f" /lib/firmware/ 2>/dev/null; }; done
+  done
+  log "firmware files linked: $(ls /etc/firmware 2>/dev/null | wc -l)"
+}
+
+# ---- bring up the CONSYS (WMT) stack and wlan0 ----
+wmt_try() {   # $1 = launcher args; returns 0 when wlan0 shows up
+  pkill wmt_launcher 2>/dev/null; sleep 1
+  log "wmt_launcher $1"
+  if [ -n "$TRACE" ] && command -v strace >/dev/null; then
+    # evidence for the self-healing step: every file the launcher tried (and failed) to open
+    # shellcheck disable=SC2086
+    setsid strace -f -qq -e trace=file,execve -s 200 -o /var/log/wmt.strace /system/bin/wmt_launcher $1 >/var/log/wmt_launcher.log 2>&1 </dev/null &
+  else
+    # shellcheck disable=SC2086
+    setsid /system/bin/wmt_launcher $1 >/var/log/wmt_launcher.log 2>&1 </dev/null &
+  fi
+  sleep 3
+  pidof wmt_launcher >/dev/null || { log "wmt_launcher exited, see /var/log/wmt_launcher.log"; return 1; }
+  for n in 1 2 3 4 5 6; do [ -e /dev/wmtWifi ] && break; mdev -s; sleep 1; done
+  [ -e /dev/wmtWifi ] || { log "/dev/wmtWifi missing"; return 1; }
+  echo 1 > /dev/wmtWifi 2>/var/log/wmtWifi.err || { log "writing /dev/wmtWifi failed: $(cat /var/log/wmtWifi.err)"; return 1; }
+  for n in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do [ -d $SYSFS/class/net/$IF ] && return 0; sleep 1; done
+  return 1
+}
+
+nodes_check() {   # the combo-chip character devices the helpers talk to (created from sysfs by mdev)
+  for n in wmtdetect stpwmt wmtWifi; do [ -e /dev/$n ] || log "WARNING: /dev/$n missing (kernel combo driver not registered? check: ls /sys/class/misc)"; done
+}
+
+wmt_start() {
+  [ -x /system/bin/wmt_launcher ] || { log "no /system/bin/wmt_launcher: run tools/make-blobs.sh on your PC (docs/NETWORK.md)"; return 1; }
+  [ -e /system/bin/linker ] || log "WARNING: /system/bin/linker missing, android binaries cannot start"
+  mkdir -p /dev/socket /data/misc /var/log
+  mdev -s; nvdata; firmware
+  FW=$(fwdir); log "firmware dir: $FW"
+  nodes_check
+  if [ -x /system/bin/wmt_loader ]; then
+    a=$(rc_args wmt_loader)
+    if [ -n "$TRACE" ] && command -v strace >/dev/null; then strace -f -qq -e trace=file,execve -s 200 -o /var/log/wmt.loader.strace /system/bin/wmt_loader $a >/var/log/wmt_loader.log 2>&1 && log "wmt_loader ok"
+    else /system/bin/wmt_loader $a >/var/log/wmt_loader.log 2>&1 && log "wmt_loader ok"; fi
+  fi
+  if [ -n "$WMT_ARGS" ]; then wmt_try "$WMT_ARGS"; return $?; fi
+  RA=$(rc_args wmt_launcher)
+  if [ -n "$RA" ]; then log "using stock command line from init .rc: $RA"; wmt_try "$RA" && return 0; fi
+  for a in "-p $FW/" "-p $FW/ -m 1" "-p $FW/ -m 3"; do wmt_try "$a" && return 0; done
+  return 1
+}
+
+preflight() {   # prints one line per prerequisite; returns 2 when the KERNEL itself lacks the combo-chip driver (nothing we do in userland can fix that)
+  bad=0; fatal=0
+  chk() { if eval "$2"; then echo "  OK       $1"; else echo "  MISSING  $1  -> $3"; bad=$((bad + 1)); fi; }
+  mdev -s 2>/dev/null
+  have_kernel=0; for n in wmtdetect stpwmt wmtWifi; do [ -e /dev/$n ] || [ -e $SYSFS/class/misc/$n ] && have_kernel=$((have_kernel + 1)); done
+  grep -qE 'stpwmt|wmt' /proc/devices 2>/dev/null && have_kernel=$((have_kernel + 1))
+  if [ "$have_kernel" = 0 ]; then echo "  MISSING  kernel combo-chip driver (no /dev/wmt*, /dev/stpwmt, /sys/class/misc/wmt*)  -> the stock kernel did not register CONSYS; check: dmesg | grep -iE 'wmt|conn|consys'"; fatal=1; bad=$((bad + 1))
+  else echo "  OK       kernel combo-chip driver registered"; fi
+  chk "/system/bin/wmt_launcher" "[ -x /system/bin/wmt_launcher ]" "run: rembly-drivers install   (takes it from the tablet's Android partitions)"
+  chk "/system/bin/linker (Android loader)" "[ -e /system/bin/linker ]" "rembly-drivers install"
+  chk "wmt_loader" "[ -x /system/bin/wmt_loader ]" "rembly-drivers install"
+  chk "firmware WMT_SOC.cfg" "ls /vendor/firmware/WMT_SOC.cfg /system/etc/firmware/WMT_SOC.cfg /etc/firmware/WMT_SOC.cfg >/dev/null 2>&1" "rembly-drivers install; rembly-net firmware"
+  chk "wlan firmware / patch (ROMv*_patch*.bin)" "ls /vendor/firmware/*patch* /system/etc/firmware/*patch* /etc/firmware/*patch* >/dev/null 2>&1" "rembly-drivers install"
+  chk "stock NVDATA partition (calibration + MAC)" "[ -e /nvdata/APCFG/APRDEB/WIFI ] || grep -lx PARTNAME=nvdata $SYSFS/class/block/*/uevent >/dev/null 2>&1" "never erase nvdata; it is only read"
+  chk "wpa_supplicant" "command -v wpa_supplicant >/dev/null" "apt: rembly-pkg install wpasupplicant"
+  chk "no rfkill block" "! rfkill list 2>/dev/null | grep -q 'Hard blocked: yes'" "hardware switch / airplane mode"
+  [ "$fatal" = 1 ] && return 2
+  return 0
+}
+
+bringup_with_heal() {
+  round=1; max=${HEAL_ROUNDS:-4}
+  mkdir -p /run/rembly; preflight > /run/rembly/preflight.txt 2>&1; pf=$?
+  log "preflight:"; tee -a /var/log/rembly-net.log < /run/rembly/preflight.txt
+  [ "$pf" = 2 ] && { log "the kernel has no Wi-Fi combo driver registered: repairs in userland cannot help (see docs/NETWORK.md)"; return 1; }
+  while [ "$round" -le "$max" ]; do
+    log "bring-up attempt $round of $max"
+    TRACE=""; [ "$round" -ge 2 ] && TRACE=1
+    wmt_start && return 0
+    [ "$round" -ge "$max" ] && break
+    log "attempt $round failed: looking for causes that can be repaired automatically (missing files/libraries/firmware)"
+    : > /var/log/wmt.strace.tmp 2>/dev/null; rm -f /var/log/wmt.strace.tmp
+    if python3 /usr/local/lib/rembly/rembly_heal.py >>/var/log/rembly-heal.log 2>&1; then log "repaired something, trying again"
+    else log "nothing repairable found in the logs"; [ "$round" -ge 2 ] && break; fi
+    pkill wmt_launcher 2>/dev/null; round=$((round + 1))
+  done
+  return 1
+}
+
+wifi_up() {
+  [ -d $SYSFS/class/net/$IF ] || bringup_with_heal || { log "$IF did not appear (see /var/log/wmt_launcher.log, dmesg | grep -iE 'wmt|wlan|conn')"; return 1; }
+  ip link set $IF up 2>&1
+  rfkill unblock all 2>/dev/null
+  [ -f $CONF ] || { mkdir -p /etc/wpa_supplicant; printf 'ctrl_interface=/run/wpa_supplicant\nupdate_config=1\ncountry=%s\n' "${COUNTRY:-US}" > $CONF; }
+  pidof wpa_supplicant >/dev/null || wpa_supplicant -B -i $IF -c $CONF -Dnl80211,wext -P /run/wpa_supplicant.pid
+  log "$IF up, MAC $(cat $SYSFS/class/net/$IF/address 2>/dev/null)"
+}
+
+dhcp() {
+  pkill -f "udhcpc -i $IF" 2>/dev/null
+  /bin/busybox udhcpc -i $IF -s /etc/rembly/udhcpc.script -b -q -t 8 -T 3 -A 5 2>&1
+}
+
+wifi_mac_report() {   # diagnostics only: compare driver MAC with the stock NVRAM entry. We NEVER set a MAC.
+  cur=$(cat $SYSFS/class/net/$IF/address 2>/dev/null); f=/nvdata/APCFG/APRDEB/WIFI
+  [ -f $f ] && nv=$(od -An -tx1 -j4 -N6 $f 2>/dev/null | tr -d '\n' | sed 's/^ //; s/ /:/g') || nv="(nvdata file not readable)"
+  echo "driver MAC: ${cur:-none}   stock NVRAM MAC: $nv"
+  [ -n "$cur" ] && [ "$nv" != "$cur" ] && echo "note: they differ -> the driver did not read the NVRAM file (check /var/log/rembly-net.log, dmesg)"
+}
+
+usb_ppp() {
+  G=/sys/class/android_usb/android0
+  case "$1" in
+    on)
+      [ -d $G ] || { log "no android_usb gadget"; return 1; }
+      log "switching USB gadget to acm+adb: the adb connection will drop and come back"
+      echo 0 > $G/enable; echo "acm,adb" > $G/functions; echo 1 > $G/enable; sleep 3; mdev -s
+      T=$(ls /dev/ttyGS0 /dev/ttyGS1 2>/dev/null | head -1); [ -c "$T" ] || { log "no /dev/ttyGS0 (acm function missing?)"; return 1; }
+      pkill -f 'pppd.*ttyGS' 2>/dev/null
+      pppd "$T" 115200 192.168.7.2:192.168.7.1 noauth local nodetach nocrtscts persist maxfail 0 proxyarp ms-dns 1.1.1.1 >/var/log/ppp-usb.log 2>&1 &
+      log "tablet=192.168.7.2. On the PC:  sudo pppd /dev/ttyACM0 115200 192.168.7.1:192.168.7.2 noauth local nodetach   (then ssh root@192.168.7.2)"
+      log "to give the tablet internet through the PC: sudo sysctl net.ipv4.ip_forward=1; sudo iptables -t nat -A POSTROUTING -s 192.168.7.0/24 -j MASQUERADE" ;;
+    off) pkill -f 'pppd.*ttyGS'; echo 0 > $G/enable; echo adb > $G/functions; echo 1 > $G/enable ;;
+    *) echo "usage: rembly-net usb-ppp on|off"; return 1 ;;
+  esac
+}
+
+# One bring-up at a time: rc.d/20-net.sh, rembly-autosetup, rembly-drivers and the GUI can all ask for it at boot; two wmt_launchers would fight.
+net_lock() {
+  L=/run/rembly/net.lock; mkdir -p /run/rembly; n=0
+  while ! mkdir $L 2>/dev/null; do
+    p=$(cat $L/pid 2>/dev/null)
+    if [ -n "$p" ] && ! kill -0 "$p" 2>/dev/null; then rm -rf $L; continue; fi          # owner died: take over
+    n=$((n + 1)); [ $n -gt 150 ] && { log "another network operation is still running after 150 s"; return 1; }
+    sleep 1
+  done
+  echo $$ > $L/pid; trap 'rm -rf /run/rembly/net.lock' EXIT INT TERM
+}
+case "$1" in auto|wifi-up|wifi-scan|wifi-connect|wifi-select|debug|heal) net_lock || exit 1 ;; esac
+
+case "$1" in
+  auto)
+    [ -x /system/bin/wmt_launcher ] || { log "no android blobs -> skipping Wi-Fi (docs/NETWORK.md)"; exit 0; }
+    wifi_up && { grep -q 'network=' $CONF 2>/dev/null && dhcp; }
+    wifi_mac_report ;;
+  wifi-up) wifi_up ;;
+  wifi-down) pkill wpa_supplicant; ip link set $IF down; echo 0 > /dev/wmtWifi 2>/dev/null ;;
+  wifi-scan)
+    wifi_up >/dev/null 2>&1; wpa_cli -i $IF scan >/dev/null 2>&1; sleep 4
+    wpa_cli -i $IF scan_results | tail -n +2 | awk -F'\t' '$5!=""{print $5"|"$3"|"$4}' | sort -t'|' -k2 -nr | awk -F'|' '!s[$1]++' ;;
+  wifi-connect)
+    SSID=$2; PSK=$3; wifi_up || exit 1
+    N=$(wpa_cli -i $IF add_network | tail -1)
+    wpa_cli -i $IF set_network $N ssid "\"$SSID\"" >/dev/null
+    if [ -n "$PSK" ]; then wpa_cli -i $IF set_network $N psk "\"$PSK\"" >/dev/null; else wpa_cli -i $IF set_network $N key_mgmt NONE >/dev/null; fi
+    wpa_cli -i $IF enable_network $N >/dev/null; wpa_cli -i $IF select_network $N >/dev/null; wpa_cli -i $IF save_config >/dev/null
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12; do wpa_cli -i $IF status | grep -q 'wpa_state=COMPLETED' && break; sleep 1; done
+    wpa_cli -i $IF status | grep -q 'wpa_state=COMPLETED' || { log "association failed (wrong password?)"; wpa_cli -i $IF remove_network $N >/dev/null; wpa_cli -i $IF save_config >/dev/null; exit 1; }
+    dhcp; ip -4 addr show $IF | grep inet; /bin/busybox ntpd -n -q -p pool.ntp.org >/dev/null 2>&1 & ;;
+  wifi-select)   # reconnect to an already saved network (no password needed)
+    SSID=$2; wifi_up || exit 1
+    N=$(wpa_cli -i $IF list_networks | awk -F'\t' -v s="$SSID" '$2==s{print $1; exit}')
+    [ -n "$N" ] || { log "network '$SSID' is not saved"; exit 1; }
+    wpa_cli -i $IF enable_network $N >/dev/null; wpa_cli -i $IF select_network $N >/dev/null
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12; do wpa_cli -i $IF status | grep -q 'wpa_state=COMPLETED' && break; sleep 1; done
+    wpa_cli -i $IF status | grep -q 'wpa_state=COMPLETED' || { log "could not connect to $SSID"; exit 1; }
+    dhcp; ip -4 addr show $IF | grep inet ;;
+  wifi-status) wpa_cli -i $IF status 2>&1 | grep -E 'ssid=|wpa_state|ip_address'; ip -4 addr show $IF 2>/dev/null | grep inet ;;
+  mac) wifi_mac_report ;;
+  nvdata) nvdata ;;
+  firmware) firmware; fwdir; ls -l /etc/firmware | head -40 ;;
+  usb-ppp) usb_ppp "$2" ;;
+  bt-up|bt-down)
+    log "Bluetooth is unavailable on the stock kernel: CONFIG_BT is not set (no AF_BLUETOOTH/HCI), so BlueZ cannot run."
+    log "The chip is reachable only through MediaTek's /dev/stpbt + Android's own stack. Options: USB keyboards/mice via OTG now;"
+    log "later a userspace Bluetooth host (BTstack) over /dev/stpbt + uinput, or a custom kernel. See docs/NETWORK.md."
+    exit 2 ;;
+  diag)
+    echo "== blobs"; ls -l /system/bin/wmt_* /system/bin/linker /vendor/firmware 2>&1 | head -40
+    echo "== rc service lines"; for s in wmt_loader wmt_launcher; do echo "$s: $(rc_args $s)"; done
+    echo "== devices"; ls -l /dev/wmt* /dev/stp* /dev/fm* /dev/gps* 2>&1
+    echo "== nvdata"; mount | grep nvdata; ls /nvdata/APCFG/APRDEB 2>&1 | head -20
+    echo "== net"; ip a; wifi_mac_report
+    echo "== dmesg"; dmesg | grep -iE 'wmt|wlan|conn|stp|nvram|firmware' | tail -60 ;;
+  modem-probe)
+    echo "== candidate AT/modem ports"; ls -l /dev/ttyC* /dev/radio/* /dev/ccci* /dev/ttyUSB* /dev/ttyACM* 2>/dev/null
+    echo "== ccci/md in dmesg"; dmesg | grep -iE 'ccci|md1|modem|sim' | tail -20
+    echo "== modem firmware"; ls /vendor/firmware/md* /system/etc/firmware/md* /vendor/firmware/modem* 2>/dev/null ;;
+  modem-up)
+    [ -f /etc/rembly/modem.conf ] && . /etc/rembly/modem.conf
+    PORT=${MODEM_PORT:-$(ls /dev/ttyC0 /dev/radio/pttycmd1 2>/dev/null | head -1)}
+    [ -n "$PORT" ] && [ -c "$PORT" ] || { log "no modem AT port found. Run: rembly-net modem-probe  (cellular comes AFTER Wi-Fi works)"; exit 1; }
+    : "${APN:?set APN in /etc/rembly/modem.conf}"
+    cat > /etc/ppp/rembly-chat <<C
+ABORT 'NO CARRIER'
+ABORT 'ERROR'
+TIMEOUT 30
+'' AT
+OK 'AT+CGDCONT=1,"IP","$APN"'
+OK 'ATD*99#'
+CONNECT ''
+C
+    pppd "$PORT" 115200 noauth nodetach defaultroute usepeerdns noipdefault persist maxfail 0 connect "chat -v -f /etc/ppp/rembly-chat" >/var/log/ppp.log 2>&1 &
+    sleep 15; ip -4 addr show ppp0 | grep inet || { log "ppp0 not up, see /var/log/ppp.log"; exit 1; } ;;
+  modem-down) pkill pppd ;;
+  status) "$0" wifi-status; wifi_mac_report; ip -4 addr show ppp0 2>/dev/null | grep inet ;;
+  preflight) preflight; exit $? ;;
+  heal) python3 /usr/local/lib/rembly/rembly_heal.py ;;
+  debug)   # one-stop Wi-Fi diagnosis: runs the bring-up (with self-repair) and prints every piece of evidence in one place
+    echo "=== bring-up"; HEAL_ROUNDS=${HEAL_ROUNDS:-4} wifi_up; echo "exit=$?"
+    echo; echo "=== wmt_launcher / wmt_loader output"; tail -n 30 /var/log/wmt_launcher.log /var/log/wmt_loader.log 2>&1
+    echo; echo "=== files the helpers could not open (strace)"; cat /var/log/wmt.strace /var/log/wmt.loader.strace 2>/dev/null | grep ENOENT | sed -n 's/.*"\([^"]*\)".*/\1/p' | sort -u | head -40
+    echo; echo "=== repairs made"; cat /var/log/rembly-heal.log 2>&1 | tail -n 30
+    echo; echo "=== kernel"; dmesg | grep -iE 'wmt|wlan|conn|stp|firmware|nvram|mtk_wifi' | tail -n 40
+    echo; echo "=== devices"; ls -l /dev/wmt* /dev/stp* 2>&1; ls /sys/class/misc 2>&1 | tr '\n' ' '; echo
+    echo; echo "=== interface"; ip -br link 2>&1; wifi_mac_report ;;
+  *) sed -n '2,18p' "$0"; exit 1 ;;
+esac

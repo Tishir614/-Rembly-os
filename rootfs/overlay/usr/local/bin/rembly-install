@@ -1,0 +1,39 @@
+#!/bin/sh
+# Install a downloaded Linux program: .deb (with dependencies) or .AppImage. Double-tap the file in the file manager.
+# usage: rembly-install FILE [--check]      (--check only prints what would happen)
+F=$1; CHECK=$2
+[ -f "$F" ] || { echo "usage: rembly-install FILE.deb|FILE.AppImage [--check]"; exit 1; }
+say() { echo "[install] $*"; notify-send "Установка" "$*" 2>/dev/null; }
+case "$F" in
+  *.deb|*.DEB)
+    arch=$(dpkg-deb -f "$F" Architecture 2>/dev/null); name=$(dpkg-deb -f "$F" Package 2>/dev/null)
+    case "$arch" in
+      armhf|all) ;;
+      *) say "Этот пакет для архитектуры '$arch', а планшет работает на armhf. Нужна сборка для armhf (ARMv7)."; exit 3 ;;
+    esac
+    echo "package: $name ($arch)"
+    [ "$CHECK" = --check ] && { echo "would run: apt-get install -y --no-install-recommends $F"; exit 0; }
+    rembly-pkg update >/dev/null 2>&1
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$(readlink -f "$F")" && say "Установлено: $name" || { say "Не удалось установить $name (см. вывод выше)"; exit 1; } ;;
+  *.AppImage|*.appimage)
+    # ELF header: byte 18 = e_machine (0x28 ARM, 0x3e x86-64, 0xb7 AArch64)
+    m=$(od -An -tx1 -j18 -N1 "$F" | tr -d ' ')
+    case "$m" in
+      28) ;;
+      3e) say "Этот AppImage для x86-64: на ARM-планшете не запустится."; exit 3 ;;
+      b7) say "Этот AppImage для AArch64 (64-бит). Ядро планшета 32-битное: нужен armhf/ARMv7."; exit 3 ;;
+      *) say "Не похоже на AppImage для ARM (e_machine=0x$m)."; exit 3 ;;
+    esac
+    base=$(basename "$F" | sed 's/\.[Aa]pp[Ii]mage$//'); dest=/opt/appimages/$base.AppImage
+    echo "AppImage: $base"
+    [ "$CHECK" = --check ] && { echo "would install to $dest and create a launcher entry"; exit 0; }
+    mkdir -p /opt/appimages /usr/local/share/applications; cp "$F" "$dest"; chmod +x "$dest"
+    icon=application-x-executable
+    t=$(mktemp -d /tmp/rembly-ai.XXXXXX); ( cd "$t" && APPIMAGE_EXTRACT_AND_RUN=1 timeout 60 "$dest" --appimage-extract '*.png' >/dev/null 2>&1; true )
+    ic=$(ls "$t"/squashfs-root/*.png 2>/dev/null | head -1); [ -n "$ic" ] && { cp "$ic" "/usr/local/share/icons-$base.png" 2>/dev/null && icon="/usr/local/share/icons-$base.png"; }
+    rm -rf "$t"
+    printf '[Desktop Entry]\nType=Application\nName=%s\nExec=rembly-appimage %s\nIcon=%s\nCategories=Utility;\nTerminal=false\n' "$base" "$dest" "$icon" > "/usr/local/share/applications/appimage-$base.desktop"
+    update-desktop-database /usr/local/share/applications 2>/dev/null
+    say "AppImage добавлен: $base (появится в «Приложениях»)" ;;
+  *) say "Не знаю, как установить '$F'. Поддерживаются .deb и .AppImage (для ARM)."; exit 1 ;;
+esac

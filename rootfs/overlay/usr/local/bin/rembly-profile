@@ -1,0 +1,21 @@
+#!/bin/sh
+# Power profile in one word.  rembly-profile eco | balanced | performance | next | status
+#   eco          battery saver: powersave governor, short screen timeouts, animations stand down
+#   balanced     the default
+#   performance  fastest governor this kernel offers. The thermal guard (rembly-thermal) still steps in if the tablet gets hot.
+CFGD=/root/.config/rembly; mkdir -p "$CFGD" /run/rembly
+cur=$(cat "$CFGD/profile" 2>/dev/null); [ -n "$cur" ] || cur=balanced
+apply() {
+  case "$1" in
+    eco) rembly-eco on >/dev/null 2>&1 ;;
+    performance) rembly-eco perf ;;
+    *) set -- balanced; rembly-eco off >/dev/null 2>&1 ;;
+  esac
+  echo "$1" > "$CFGD/profile"; echo "$1" > /run/rembly/profile
+}
+case "$1" in
+  eco|balanced|performance) apply "$1"; notify-send "Профиль: $1" 2>/dev/null; echo "$1" ;;
+  next) case "$cur" in eco) n=balanced;; balanced) n=performance;; *) n=eco;; esac; "$0" "$n" ;;
+  apply) apply "$cur" ;;                     # at login: restore the saved profile (silently)
+  *) echo "$cur" ;;
+esac

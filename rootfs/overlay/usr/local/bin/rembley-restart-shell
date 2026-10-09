@@ -1,3 +1,0 @@
-#!/bin/sh
-# Re-exec the desktop shell (reloads wallpaper/name/city). SIGHUP makes rembley-shell exec itself.
-kill -HUP $(pgrep -f '[r]embley-shell$') 2>/dev/null

@@ -1,7 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Хранилище
-Comment=Где занято место, безопасная очистка
-Exec=rembley-storage
-Icon=drive-harddisk
-Categories=System;

@@ -4,14 +4,14 @@
   wordmark.png         "REMBLY OS", hand-built angular lettering: mitred corners, pointed cut terminals - the same language as the fox's ears and whiskers
   logo.png             mark above wordmark on black (1024 sq)    logo-small.png        same, 520 px (about / lock)
   avatar.png           mark in a black frame (256 px)
-usage: tools/gen_brand.py [OUTDIR]  (default rootfs/overlay/usr/share/rembley; assets/ gets logo-mark.png + wordmark.png too)"""
+usage: tools/gen_brand.py [OUTDIR]  (default rootfs/overlay/usr/share/rembly; assets/ gets logo-mark.png + wordmark.png too)"""
 import math, os, sys
 import cairo
 import numpy as np
 from PIL import Image, ImageDraw
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, 'rootfs/overlay/usr/share/rembley')
+OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, 'rootfs/overlay/usr/share/rembly')
 os.makedirs(OUT, exist_ok=True)
 
 

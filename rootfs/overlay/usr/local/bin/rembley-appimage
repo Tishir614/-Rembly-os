@@ -1,7 +1,0 @@
-#!/bin/sh
-# Run an AppImage without FUSE (the stock kernel's FUSE needs a userspace helper): it unpacks to /tmp on the fly.
-# Chromium/Electron-based AppImages need REMBLEY_NOSANDBOX=1 (no user namespaces in this kernel).
-export APPIMAGE_EXTRACT_AND_RUN=1
-f=$1; shift
-[ "$REMBLEY_NOSANDBOX" = 1 ] && exec nice -n 8 "$f" --no-sandbox "$@"
-exec nice -n 8 "$f" "$@"

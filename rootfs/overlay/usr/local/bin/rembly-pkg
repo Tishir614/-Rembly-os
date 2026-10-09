@@ -1,0 +1,35 @@
+#!/bin/sh
+# Friendly package manager for Rembly (Ubuntu 20.04 armhf). Checks free space BEFORE installing so the tablet never fills up.
+# usage: rembly-pkg search WORD | info PKG | install PKG... | remove PKG... | update | upgrade | list | which FILE | clean | size PKG...
+export DEBIAN_FRONTEND=noninteractive
+APT="apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
+need_net() { ip route 2>/dev/null | grep -q default || echo "warning: no default route (Wi-Fi/USB network is not up?)"; }
+est() {   # prints "<MB download> <MB disk>" for installing the given packages (simulation: nothing is installed)
+  sim=$(LC_ALL=C $APT -s install --no-install-recommends "$@" 2>&1) || { echo "$sim" | tail -3 >&2; return 1; }
+  names=$(echo "$sim" | awk '/^Inst /{print $2}')
+  [ -n "$names" ] || { echo "0 0"; return 0; }                      # nothing to install (already present)
+  dl=$(LC_ALL=C $APT install --print-uris -qq --no-install-recommends "$@" 2>/dev/null | awk '{s+=$3} END{printf "%d", s/1048576}')
+  # shellcheck disable=SC2086
+  dk=$(apt-cache show --no-all-versions $names 2>/dev/null | awk '/^Installed-Size:/{s+=$2} END{printf "%d", s/1024}')
+  echo "${dl:-0} ${dk:-0}"
+}
+case "$1" in
+  search) shift; apt-cache search "$@" | head -${LIMIT:-40} ;;
+  info) shift; apt-cache show "$@" | grep -E '^(Package|Version|Installed-Size|Depends|Description):' | head -20 ;;
+  size) shift; set -- $(est "$@"); echo "download ~$1 MB, disk ~$2 MB; free on /: $(df -m --output=avail / | tail -1 | tr -d ' ') MB" ;;
+  install)
+    shift; [ $# -gt 0 ] || { echo "usage: rembly-pkg install PKG..."; exit 1; }; need_net
+    r=$(est "$@") || exit 1; set -- "$@"; dl=${r% *}; dk=${r#* }
+    free=$(df -m --output=avail / | tail -1 | tr -d ' ')
+    echo "will download ~${dl} MB, use ~${dk} MB on disk (free: ${free} MB)"
+    if [ "$dk" -gt $(( free * 85 / 100 )) ]; then echo "NOT ENOUGH SPACE: need ~${dk} MB, free ${free} MB. Free some space or remove packages (rembly-pkg clean)."; exit 2; fi
+    [ "$dk" -gt 700 ] && echo "note: this is a big install; on a 2 GB RAM tablet the app may also be heavy to run."
+    $APT install -y --no-install-recommends "$@" ;;
+  remove|purge) shift; $APT remove --purge -y "$@" && $APT autoremove -y ;;
+  update) $APT update ;;
+  upgrade) need_net; $APT update && $APT upgrade -y --no-install-recommends ;;
+  list) dpkg-query -W -f='${Installed-Size}\t${Package}\t${Version}\n' | sort -rn | awk '{printf "%7.1f MB  %s %s\n",$1/1024,$2,$3}' | head -${LIMIT:-40} ;;
+  which) shift; dpkg -S "$(command -v "$1" 2>/dev/null || echo "$1")" 2>&1 ;;
+  clean) $APT clean; $APT autoremove -y; rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb /tmp/rembly-* 2>/dev/null; df -h / | tail -1 ;;
+  *) sed -n '2,3p' "$0"; exit 1 ;;
+esac

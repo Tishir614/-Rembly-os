@@ -1,1 +1,1 @@
-# rootfs is mounted by the initramfs (label REMBLEY or rembley-rootfs.img)
+# rootfs is mounted by the initramfs (label REMBLY or rembly-rootfs.img)

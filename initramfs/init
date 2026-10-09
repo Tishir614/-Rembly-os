@@ -1,5 +1,5 @@
 #!/bin/busybox sh
-# Rembley OS stage-1 init for A73 (MT6737M, kernel 3.18.79, no devtmpfs/VT).
+# Rembly OS stage-1 init for A73 (MT6737M, kernel 3.18.79, no devtmpfs/VT).
 # Never writes to eMMC. Falls back to an emergency shell + adb.
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 /bin/busybox --install -s /bin 2>/dev/null
@@ -20,7 +20,7 @@ mknod -m 620 /dev/tty1 c 4 1
 mount -t devpts devpts /dev/pts 2>/dev/null
 exec >/dev/console 2>&1 </dev/console 2>/dev/null || true
 
-log() { echo "[rembley] $*"; echo "[rembley] $*" >/dev/kmsg 2>/dev/null; }
+log() { echo "[rembly] $*"; echo "[rembly] $*" >/dev/kmsg 2>/dev/null; }
 log "stage1 start, kernel $(uname -r)"
 
 # Populate /dev from sysfs (works without devtmpfs), then Android-style aliases.
@@ -72,10 +72,10 @@ if [ -d $G ]; then
   echo 0 >$G/enable
   echo 18d1 >$G/idVendor; echo d001 >$G/idProduct
   echo adb >$G/functions
-  echo Rembley >$G/iManufacturer; echo A73 >$G/iProduct; echo rembley-a73 >$G/iSerial
+  echo Rembly >$G/iManufacturer; echo A73 >$G/iProduct; echo rembly-a73 >$G/iSerial
   echo 1 >/sys/devices/platform/mt_usb/cmode 2>/dev/null
   if [ -x /sbin/adbd ]; then
-    /sbin/adbd --device_banner=rembley >/tmp/adbd.log 2>&1 &
+    /sbin/adbd --device_banner=rembly >/tmp/adbd.log 2>&1 &
     sleep 1
     echo 1 >$G/enable
     log "adbd started"
@@ -84,18 +84,18 @@ else
   log "no android_usb gadget in sysfs (see /tmp/hwreport.txt)"
 fi
 
-# --- find rootfs: partition labelled REMBLEY, or rembley-rootfs.img on any fs ---
+# --- find rootfs: partition labelled REMBLY, or rembly-rootfs.img on any fs ---
 # ext4 volume label lives at superblock offset 1024+120 (no blkid applet in this busybox)
 label_of() { dd if="$1" bs=1 skip=1144 count=16 2>/dev/null | tr -d '\000'; }
 try_mount_root() {
   dev=$1
   mount -o ro "$dev" /mnt 2>/dev/null || return 1
-  if [ "$(label_of "$dev")" = REMBLEY ] && [ -x /mnt/sbin/init ]; then
+  if [ "$(label_of "$dev")" = REMBLY ] && [ -x /mnt/sbin/init ]; then
     mount -o remount,rw /mnt; mount --move /mnt /newroot; return 0
   fi
-  if [ -f /mnt/rembley-rootfs.img ]; then
+  if [ -f /mnt/rembly-rootfs.img ]; then
     mount -o remount,rw /mnt 2>/dev/null
-    if mount -o loop /mnt/rembley-rootfs.img /newroot 2>/dev/null && [ -x /newroot/sbin/init ]; then
+    if mount -o loop /mnt/rembly-rootfs.img /newroot 2>/dev/null && [ -x /newroot/sbin/init ]; then
       return 0
     fi
     umount /newroot 2>/dev/null

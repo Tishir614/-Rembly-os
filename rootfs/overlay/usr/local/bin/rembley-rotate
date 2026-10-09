@@ -1,6 +1,0 @@
-#!/bin/sh
-# usage: rembley-rotate cw|ccw|ud|none   (restarts X)
-case "$1" in cw|ccw|ud|none) ;; *) echo "usage: $0 cw|ccw|ud|none"; exit 1;; esac
-mkdir -p /etc/rembley; U=$(echo "$1" | tr a-z A-Z); [ "$U" = NONE ] && U=none
-sed -i '/^ROTATE=/d' /etc/rembley/display.conf 2>/dev/null; echo "ROTATE=$U" >> /etc/rembley/display.conf
-pkill -x Xorg

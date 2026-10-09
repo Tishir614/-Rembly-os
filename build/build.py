@@ -53,7 +53,7 @@ def main():
              ('bin/sh', L, b'busybox'), ('system/bin/sh', L, b'../../bin/busybox')]
     cpio = T.cpio_write(ents)
     rd = gzip.compress(cpio, 9, mtime=0)
-    open(os.path.join(OUT, 'rembley-initramfs.cpio.gz'), 'wb').write(rd)
+    open(os.path.join(OUT, 'rembly-initramfs.cpio.gz'), 'wb').write(rd)
     img = os.path.join(OUT, 'A73-linux-test.img')
     sz = T.pack_boot(img, k, rd, 'bootopt=64S3,32N2,32N2 buildvariant=user')
     assert sz < 16 * 1024 * 1024, 'image too large: %d' % sz

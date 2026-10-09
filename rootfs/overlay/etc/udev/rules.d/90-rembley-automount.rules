@@ -1,3 +1,0 @@
-# USB sticks / OTG disks / SD cards behave like on a PC: they appear in /media/<label> and in the file manager.
-ACTION=="add",    SUBSYSTEM=="block", KERNEL=="sd[a-z][0-9]*|sd[a-z]|mmcblk1p[0-9]*", ENV{ID_FS_USAGE}=="filesystem", RUN+="/usr/local/bin/rembley-automount add %k"
-ACTION=="remove", SUBSYSTEM=="block", KERNEL=="sd[a-z][0-9]*|sd[a-z]|mmcblk1p[0-9]*", RUN+="/usr/local/bin/rembley-automount remove %k"

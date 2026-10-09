@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Диспетчер задач
+Comment=Что грузит процессор и память, закрыть программу
+Exec=rembly-taskman
+Icon=utilities-system-monitor
+Categories=System;Monitor;
