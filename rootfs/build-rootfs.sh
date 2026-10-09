@@ -49,6 +49,7 @@ PKGS_DESK="xserver-xorg-core xdotool ntfs-3g exfat-fuse exfat-utils xserver-xorg
  fonts-noto-core fonts-dejavu-core papirus-icon-theme adwaita-icon-theme gtk2-engines-pixbuf \
  libglib2.0-bin qt5-gtk-platformtheme libfuse2 squashfs-tools desktop-file-utils shared-mime-info netsurf-gtk geany galculator mpv atril file-roller \
  gir1.2-gtksource-4 gir1.2-vte-2.91 python3-mutagen \
+ sshfs picocom freerdp2-x11 xtightvncviewer telnet \
  dunst libnotify-bin xprintidle scrot x11-xkb-utils xdg-utils fonts-firacode"
 chroot "$R" /usr/bin/env DEBIAN_FRONTEND=noninteractive sh -ec "
   apt-get update

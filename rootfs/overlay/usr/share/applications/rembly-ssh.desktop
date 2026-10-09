@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=Servers
+Name[ru]=Серверы
+Comment=Подключения к серверам: SSH-терминалы, последовательный порт, RDP, VNC, папки серверов (sshfs)
+Exec=rembly-ssh
+Icon=network-server
+Terminal=false
+Categories=Network;RemoteAccess;System;
+Actions=local;
+
+[Desktop Action local]
+Name=Локальный терминал
+Exec=rembly-ssh --local

@@ -8,11 +8,12 @@ sys.path[:0] = ['/usr/local/lib/rembly', os.path.join(os.path.dirname(os.path.ab
 import gi
 gi.require_version('Gtk', '3.0'); gi.require_version('GtkSource', '4')
 from gi.repository import Gtk, Gdk, GLib, GtkSource, Pango
-try:
-    gi.require_version('Vte', '2.91'); from gi.repository import Vte; HAVE_VTE = True
-except (ValueError, ImportError):
-    HAVE_VTE = False
 import remblyui as ui
+import rembly_term as rt
+try:
+    import rembly_aiui as aiui                                  # AI chat / edit / project wizard; the editor works without it
+except Exception:
+    aiui = None
 
 CFGF = os.path.join(ui.CFG, 'code.json')
 CSS = b"""
@@ -100,10 +101,16 @@ class Code(Gtk.Window):
         self.search_bar = self.build_search(); root.pack_start(self.search_bar, False, False, 0)
         self.paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL); root.pack_start(self.paned, True, True, 0)
         self.paned.pack1(self.build_explorer(), False, False)
-        self.vpaned = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL); self.paned.pack2(self.vpaned, True, False)
+        self.side = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL); self.paned.pack2(self.side, True, False)                       # editor+terminal | AI chat (landscape)
+        self.vpaned = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL); self.side.pack1(self.vpaned, True, False)
         self.nb = Gtk.Notebook(); self.nb.set_scrollable(True); self.nb.set_show_border(False); self.nb.connect('switch-page', lambda nb, w, n: GLib.idle_add(self.update_status, self.doc_at(n)))
         self.vpaned.pack1(self.nb, True, False)
-        self.term_box = self.build_terminal(); self.vpaned.pack2(self.term_box, False, False)
+        self.bottom = Gtk.Notebook(); self.bottom.set_show_border(False); self.vpaned.pack2(self.bottom, False, False)               # bottom panel: terminal (+ AI chat on a narrow screen)
+        self.term_box = self.build_terminal(); self.bottom.append_page(self.term_box, Gtk.Label(label='Терминал'))
+        self.ai_panel = aiui.ChatPanel(self) if aiui else None
+        if self.ai_panel is not None:
+            if self.narrow: self.bottom.append_page(self.ai_panel, Gtk.Label(label='ИИ'))
+            else: self.ai_panel.set_size_request(430, -1); self.side.pack2(self.ai_panel, False, False)
         self.status = Gtk.Label(xalign=0); self.status.get_style_context().add_class('code-status'); self.status.set_ellipsize(Pango.EllipsizeMode.START)
         root.pack_start(self.status, False, False, 0)
         self.paned.set_position(250); self.set_folder(self.folder)
@@ -117,7 +124,8 @@ class Code(Gtk.Window):
             for p in c.get('files', []):
                 if os.path.isfile(p): self.open_file(p)
         if not self.docs: self.new_doc()
-        self.show_all(); self.term_box.hide(); self.search_bar.set_search_mode(False)
+        self.show_all(); self.bottom.hide(); self.search_bar.set_search_mode(False)
+        if self.ai_panel is not None and not self.narrow: self.ai_panel.hide()
         if self.narrow: self.explorer.hide()
         GLib.timeout_add_seconds(10, self.git_tick); self.git_tick(); self.update_status(self.current())
         GLib.timeout_add_seconds(60, lambda: (self.autosave_all(), True)[1])
@@ -138,6 +146,8 @@ class Code(Gtk.Window):
                  (['media-playback-start'], 'Запустить файл (F5)', self.run_current, L('Запуск')), (['utilities-terminal'], 'Терминал (Ctrl+`)', self.toggle_terminal, L('Терминал')),
                  (['input-keyboard'], 'Экранная клавиатура', self.toggle_osk, None)]
         for ic, tip, cb, lab in items: bar.pack_start(self.tb(ic, tip, cb, lab), False, False, 0)
+        ab = Gtk.Button(label='✦' if self.narrow else '✦ ИИ'); ab.set_tooltip_text('ИИ: чат, правка выделенного (Ctrl+K), создание проектов (Ctrl+L)'); ab.set_relief(Gtk.ReliefStyle.NONE); ab.get_style_context().add_class('bar-btn')
+        ab.set_size_request(-1, 46); ab.connect('clicked', lambda _b: self.toggle_ai()); bar.pack_start(ab, False, False, 0)
         if not self.narrow: bar.pack_start(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL), False, False, 6)
         for txt, cb, tip in (() if self.narrow else (('A−', lambda: self.zoom(-1), 'Мельче'), ('A+', lambda: self.zoom(1), 'Крупнее'), ('↵', self.toggle_wrap, 'Перенос строк'), ('◐', self.toggle_scheme, 'Тема: ч/б или «матрица»'))):
             b = Gtk.Button(label=txt); b.set_relief(Gtk.ReliefStyle.NONE); b.get_style_context().add_class('bar-btn'); b.set_tooltip_text(tip); b.set_size_request(46, 46); b.connect('clicked', lambda _b, f=cb: f()); bar.pack_start(b, False, False, 0)
@@ -170,49 +180,42 @@ class Code(Gtk.Window):
         return box
 
     def build_terminal(self):
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL); box.set_size_request(-1, 230)
-        if not HAVE_VTE:
-            box.pack_start(Gtk.Label(label='Встроенный терминал недоступен (gir1.2-vte-2.91). Откройте xfce4-terminal.'), True, True, 0); self.term = None; return box
-        t = Vte.Terminal(); self.term = t; t.set_scrollback_lines(2000); t.set_font(Pango.FontDescription('Fira Code 11')); t.set_cursor_blink_mode(Vte.CursorBlinkMode.ON)
-        fg, bg = Gdk.RGBA(), Gdk.RGBA(); fg.parse('#39ff88' if ui.HACKER else '#eaeaea'); bg.parse('#020604' if ui.HACKER else '#060606')
-        pal = []
-        for h in (('#0b140e', '#ff5555', '#39ff88', '#f1fa8c', '#4da6ff', '#d58cff', '#3de0d0', '#c9ffe0', '#2f5d42', '#ff7777', '#7dffb0', '#ffff99', '#80c0ff', '#e0aaff', '#7ff0e6', '#ffffff') if ui.HACKER else
-                  ('#1a1a1a', '#bdbdbd', '#d0d0d0', '#e0e0e0', '#a8a8a8', '#c8c8c8', '#d8d8d8', '#e8e8e8', '#555555', '#cfcfcf', '#dedede', '#ececec', '#bcbcbc', '#d6d6d6', '#e4e4e4', '#ffffff')):
-            g = Gdk.RGBA(); g.parse(h); pal.append(g)
-        t.set_colors(fg, bg, pal)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL); box.set_size_request(-1, 230); self.spawned = False; self.term_size = 11
+        t = rt.make_terminal(self.term_size) if rt.available() else None; self.term = t
+        if t is None:
+            box.pack_start(Gtk.Label(label='Встроенный терминал недоступен (gir1.2-vte-2.91). Откройте xfce4-terminal.'), True, True, 0); return box
         sc = Gtk.Scrollbar(orientation=Gtk.Orientation.VERTICAL, adjustment=t.get_vadjustment())
         row = Gtk.Box(); row.pack_start(t, True, True, 0); row.pack_start(sc, False, False, 0); box.pack_start(row, True, True, 0)
-        self.spawned = False; t.connect('child-exited', self.on_shell_exit)
+        box.pack_start(rt.KeyBar(t, font_cb=self.term_font), False, False, 0); t.connect('child-exited', self.on_shell_exit)
         return box
+
+    def term_font(self, d):
+        self.term_size = max(8, min(22, self.term_size + d)); self.term.set_font(Pango.FontDescription('Fira Code %d' % self.term_size))
 
     def on_shell_exit(self, *_):
         self.spawned = False
-        if self.term_box.get_visible(): GLib.idle_add(self.spawn_shell)
+        if self.bottom.get_visible() and self.bottom.get_current_page() == 0: GLib.idle_add(self.spawn_shell)
 
     def spawn_shell(self):
         if not self.term or self.spawned: return
         self.spawned = True
-        folder = self.folder if os.path.isdir(self.folder) else os.path.expanduser('~')
-        try: self.term.spawn_async(Vte.PtyFlags.DEFAULT, folder, ['/bin/bash', '-l'], None, GLib.SpawnFlags.DEFAULT, None, None, -1, None, self.on_spawned, None)
-        except Exception:
-            try: self.term.spawn_sync(Vte.PtyFlags.DEFAULT, folder, ['/bin/bash', '-l'], None, GLib.SpawnFlags.DEFAULT, None, None)
-            except Exception: pass
-            self.on_spawned(self.term, 0, None, None)
+        rt.spawn(self.term, ['/bin/bash', '-l'], cwd=self.folder, callback=self.on_spawned)
 
-    def on_spawned(self, term, pid, error, _data):
-        self.shell_ready = error is None
+    def on_spawned(self, pid, error):
         for cmd in getattr(self, 'pending', []): GLib.timeout_add(250, self.feed, cmd)       # let bash print its first prompt
         self.pending = []
 
     def feed(self, cmd):
-        data = (cmd + '\n').encode()
-        try: self.term.feed_child(data)
-        except TypeError: self.term.feed_child(cmd + '\n', -1)
-        return False
+        rt.feed(self.term, cmd + '\n'); return False
+
+    def show_bottom(self, page):
+        self.bottom.show_all(); self.bottom.set_current_page(page); self.vpaned.set_position(max(200, self.get_allocated_height() - (580 if page == 1 else 360)))
+        if page == 0 and self.term: self.spawn_shell(); self.term.grab_focus()
+        elif page == 1 and self.ai_panel is not None and self.narrow: self.ai_panel.entry.grab_focus()
 
     def term_run(self, cmd):
         if not self.term: subprocess.Popen(['xfce4-terminal', '--hold', '-e', 'bash -c %s' % json.dumps(cmd)], cwd=self.folder); return
-        was = self.spawned; self.term_box.show_all(); self.vpaned.set_position(max(200, self.get_allocated_height() - 330)); self.spawn_shell(); self.term.grab_focus()
+        was = self.spawned; self.show_bottom(0)
         if was: self.feed(cmd)
         else: self.pending = getattr(self, 'pending', []) + [cmd]
 
@@ -220,7 +223,7 @@ class Code(Gtk.Window):
     def set_folder(self, path):
         self.folder = path; self.cfg['folder'] = path; self.store.clear(); self.exp_title.set_text('[ %s ]' % (os.path.basename(path.rstrip('/')) or '/'))
         self.fill(None, path); self.set_title('Rembly Code — %s' % os.path.basename(path.rstrip('/')))
-        if getattr(self, 'term', None) and self.spawned and not self.term_box.get_visible():       # a shell opened in the old folder: replace it on the next show
+        if getattr(self, 'term', None) and self.spawned and not self.bottom.get_visible():         # a shell opened in the old folder: replace it on the next show
             try: self.term.get_pty().close()
             except Exception: pass
 
@@ -369,11 +372,30 @@ class Code(Gtk.Window):
     def toggle_osk(self):
         self.osk_on = not getattr(self, 'osk_on', False); ui.osk(self.osk_on)
 
-    def toggle_terminal(self):
-        if self.term_box.get_visible(): self.term_box.hide()
-        else:
-            self.term_box.show_all(); self.vpaned.set_position(max(200, self.get_allocated_height() - 330))
-            if self.term: self.spawn_shell(); self.term.grab_focus()
+    def toggle_panel(self, page):
+        if self.bottom.get_visible() and self.bottom.get_current_page() == page: self.bottom.hide()
+        else: self.show_bottom(page)
+
+    def toggle_terminal(self): self.toggle_panel(0)
+
+    def toggle_ai(self):
+        if self.ai_panel is None: self.msg('Модуль ИИ не найден (rembly_aiui.py). Выполните: rembly-repair fix'); return
+        if self.narrow: self.toggle_panel(1); return
+        if self.ai_panel.get_visible(): self.ai_panel.hide(); return
+        self.show_ai()
+
+    def show_ai(self):
+        if self.narrow: self.show_bottom(1); return
+        self.ai_panel.show_all(); self.ai_panel.stop_b.hide() if not self.ai_panel.busy else None; self.side.set_position(max(400, self.side.get_allocated_width() - 440)); self.ai_panel.entry.grab_focus()
+
+    def ai_edit(self):
+        if aiui: aiui.ai_edit(self)
+
+    def ai_new_project(self):
+        if aiui: aiui.new_project(self)
+
+    def ai_settings(self):
+        if aiui and aiui.open_settings(self) and self.ai_panel is not None: self.ai_panel.refresh_title()
 
     def run_current(self):
         d = self.current()
@@ -447,6 +469,7 @@ class Code(Gtk.Window):
                 ('› Терминал', self.toggle_terminal), ('› Открыть папку…', self.pick_folder), ('› Тема: ч/б ↔ матрица', self.toggle_scheme),
                 ('› Перенос строк', self.toggle_wrap), ('› Шрифт крупнее', lambda: self.zoom(1)), ('› Шрифт мельче', lambda: self.zoom(-1)), ('› Поиск', self.toggle_search), ('› Новый файл', self.new_doc),
                 ('› Автосохранение: ' + ('выкл' if self.autosave_on else 'вкл'), self.toggle_autosave)]
+        cmds += [('› ИИ: чат (Ctrl+L)', self.toggle_ai), ('› ИИ: изменить выделенное (Ctrl+K)', self.ai_edit), ('› ИИ: создать проект…', self.ai_new_project), ('› ИИ: ключ или локальный сервер…', self.ai_settings)]
         if ui.have('code-rembly'): cmds.append(('› Открыть эту папку в настоящем VS Code', lambda: subprocess.Popen(['code-rembly', self.folder], start_new_session=True)))
         else: cmds.append(('› Установить настоящий VS Code (тяжёлый, по желанию)…', lambda: self.term_run('rembly-install-vscode')))
         files = self.project_files(); items = [(c[0], c[1]) for c in cmds] + [(os.path.relpath(p, self.folder), (lambda p=p: self.open_file(p))) for p in files]
@@ -501,6 +524,8 @@ class Code(Gtk.Window):
         if ctrl and k in ('f', 'F'): self.toggle_search(); return True
         if ctrl and k in ('p', 'P'): self.palette(); return True
         if ctrl and k in ('b', 'B'): self.toggle_explorer(); return True
+        if ctrl and k in ('k', 'K'): self.ai_edit(); return True
+        if ctrl and k in ('l', 'L'): self.toggle_ai(); return True
         if ctrl and k in ('w', 'W'): d = self.current(); self.close_doc(d) if d else None; return True
         if ctrl and k in ('grave',): self.toggle_terminal(); return True
         if ctrl and k in ('plus', 'equal', 'KP_Add'): self.zoom(1); return True

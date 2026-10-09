@@ -139,6 +139,8 @@ entry.rl-search { background-color: rgba(255,255,255,0.12); color: #ffffff; bord
 .rapp button.btn-danger { background-image: linear-gradient(180deg, #f6f6f6, #b9b9b9); color: #050505; border-color: #ffffff; font-size: 18px; }
 .rapp button.btn-main { font-size: 18px; }
 .rapp button.btn-neutral { background-image: none; background-color: rgba(255,255,255,0.06); box-shadow: none; }
+.rapp button.on { background-image: none; background-color: #f4f4f4; color: #050505; }
+.rapp button.on label { color: #050505; }
 .rapp progressbar trough { background-color: rgba(255,255,255,0.12); border-radius: 3px; }
 .rapp progressbar progress { background-image: linear-gradient(90deg, #ffffff, #8c8c8c); border-radius: 3px; }
 .rapp scale highlight { background-image: linear-gradient(90deg, #ffffff, #8c8c8c); border-radius: 3px; }
@@ -176,6 +178,8 @@ HACKER_CSS = b"""
 .rapp button:hover { background-image: linear-gradient(180deg, #14331f, #08150d); border-color: #39ff88; }
 .rapp button:active { background-image: none; background-color: #39ff88; color: #02100a; }
 .rapp button:active label { color: #02100a; }
+.rapp button.on { background-image: none; background-color: #39ff88; color: #02100a; }
+.rapp button.on label { color: #02100a; }
 .rapp button.btn-danger { background-image: linear-gradient(180deg, #39ff88, #15a257); color: #02100a; border-color: #8dffb9; }
 .rapp button.btn-danger label { color: #02100a; }
 .rapp button.btn-neutral { background-image: none; background-color: rgba(57,255,136,0.07); box-shadow: none; }

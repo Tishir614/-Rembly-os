@@ -1,0 +1,347 @@
+#!/usr/bin/env python3
+"""Rembly Servers (rembly-ssh) - connections to servers and their terminals, built for a touch tablet.
+SSH (terminal tabs), serial ports (picocom), RDP (xfreerdp) and VNC viewers, Telnet. Saved connections, quick connect (user@host:port), a touch key bar
+(Esc, Tab, sticky Ctrl/Alt, arrows, | ~ / -), automatic reconnect, SSH keys (create, show, send to a server), remote folders as real folders (sshfs).
+Passwords are not stored anywhere: they are typed into the terminal when the program asks (use keys where you can).
+usage: rembly-ssh [NAME | user@host[:port]]     open that connection at once       rembly-ssh --local     local terminal tab"""
+import os, signal, subprocess, sys, time
+sys.path[:0] = ['/usr/local/lib/rembly', os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'lib', 'rembly')]
+import gi
+gi.require_version('Gtk', '3.0'); gi.require_version('Gdk', '3.0')
+from gi.repository import Gtk, Gdk, GLib, Pango
+import remblyui as ui
+import rembly_servers as sv
+import rembly_term as rt
+
+PKG = {'xfreerdp': 'freerdp2-x11', 'xtightvncviewer': 'xtightvncviewer', 'picocom': 'picocom', 'telnet': 'telnet', 'sshfs': 'sshfs', 'ssh': 'openssh-client', 'ssh-copy-id': 'openssh-client'}
+CSS = b"""
+.rssh .chip { font-family: 'Fira Code', monospace; font-size: 12px; padding: 2px 8px; border: 1px solid rgba(255,255,255,0.6); border-radius: 3px; }
+.rssh .sname { font-size: 18px; font-weight: 600; }
+.rssh .shost { font-family: 'Fira Code', monospace; font-size: 13px; color: #cfcfcf; }
+.rssh .sbar { background-color: rgba(0,0,0,0.85); border-top: 1px solid rgba(255,255,255,0.3); padding: 4px 8px; }
+.rssh .sbar label { font-family: 'Fira Code', monospace; font-size: 12px; }
+.rssh button.tabx { min-height: 30px; min-width: 30px; padding: 0; border-radius: 4px; background-image: none; background-color: transparent; border: none; box-shadow: none; }
+.rssh notebook > header > tabs > tab { padding: 2px 6px 2px 12px; min-height: 42px; }
+"""
+CSS_H = b""".rssh .chip { border-color: rgba(57,255,136,0.8); color: #39ff88; } .rssh .shost { color: #7fd9a6; } .rssh .sbar { border-top-color: rgba(57,255,136,0.5); background-color: rgba(0,10,4,0.9); }"""
+
+
+def tool_label(name): return PKG.get(name, name)
+
+
+class Session(Gtk.Box):
+    """one terminal tab: the program (ssh, picocom, ...) runs in the terminal; when it ends a bar offers reconnect"""
+    def __init__(self, app, title, argv, hint='', auto=False, on_done=None, cwd=None, env=None):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
+        self.app, self.title, self.argv, self.hint, self.on_done, self.cwd, self.env = app, title, argv, hint, on_done, cwd, env
+        self.pid = 0; self.alive = False; self.tries = 0; self.started = 0.0; self.timer = 0; self.can_auto = auto
+        self.term = rt.make_terminal(app.font_size); self.term.connect('child-exited', self.on_exit)
+        sc = Gtk.Scrollbar(orientation=Gtk.Orientation.VERTICAL, adjustment=self.term.get_vadjustment())
+        row = Gtk.Box(); row.pack_start(self.term, True, True, 0); row.pack_start(sc, False, False, 0); self.pack_start(row, True, True, 0)
+        self.keys = rt.KeyBar(self.term, font_cb=app.change_font); self.pack_start(self.keys, False, False, 0)
+        self.bar = Gtk.Box(spacing=8); self.bar.get_style_context().add_class('sbar'); self.msg = Gtk.Label(label='', xalign=0); self.msg.set_ellipsize(Pango.EllipsizeMode.END)
+        self.bar.pack_start(self.msg, True, True, 0)
+        self.auto_cb = Gtk.CheckButton(label='авто-переподключение'); self.auto_cb.set_active(auto)
+        if auto: self.bar.pack_start(self.auto_cb, False, False, 0)
+        b = Gtk.Button(label='Переподключить'); b.connect('clicked', lambda _b: self.start()); self.bar.pack_start(b, False, False, 0)
+        b2 = Gtk.Button(label='Закрыть вкладку'); b2.connect('clicked', lambda _b: app.close_session(self)); self.bar.pack_start(b2, False, False, 0)
+        self.pack_start(self.bar, False, False, 0); self.show_all(); self.bar.hide()
+
+    def banner(self, text):
+        try: self.term.feed(('\r\n\x1b[2m' + text + '\x1b[0m\r\n\r\n').encode('utf8'))
+        except TypeError: self.term.feed('\r\n' + text + '\r\n\r\n', -1)
+
+    def start(self):
+        if self.timer: GLib.source_remove(self.timer); self.timer = 0
+        self.bar.hide(); self.started = time.time(); self.alive = True
+        if self.hint and self.tries == 0: self.banner(self.hint)
+        rt.spawn(self.term, self.argv, cwd=self.cwd, env=self.env, callback=self.spawned); self.term.grab_focus()
+
+    def spawned(self, pid, err):
+        if err is not None or not pid:
+            self.alive = False; self.show_bar('Не удалось запустить: %s' % (err or 'неизвестная ошибка'))
+        else: self.pid = pid
+
+    def on_exit(self, term, status):
+        self.alive = False; self.pid = 0
+        code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else -(os.WTERMSIG(status) if os.WIFSIGNALED(status) else 0)
+        if time.time() - self.started > 25: self.tries = 0                      # it was a real session, not a connection that failed at once
+        if self.on_done and not self.on_done(self, code): return
+        if self.can_auto and self.auto_cb.get_active() and code == 255 and self.tries < 5:
+            self.tries += 1; self.show_bar('Соединение не удалось (код 255). Повтор %d из 5 через 4 с…' % self.tries); self.timer = GLib.timeout_add_seconds(4, lambda: (self.start(), False)[1]); return
+        self.show_bar('Соединение закрыто (код %s)%s' % (code, ': ошибка подключения, проверьте адрес, порт и сеть' if code == 255 else ''))
+
+    def show_bar(self, text):
+        self.msg.set_text(text); self.bar.show_all()
+        if not self.can_auto: self.auto_cb.hide()
+
+    def close(self):
+        if self.timer: GLib.source_remove(self.timer); self.timer = 0
+        if self.alive and self.pid:
+            try: os.kill(self.pid, signal.SIGHUP)
+            except OSError: pass
+
+
+class ConnDialog(Gtk.Dialog):
+    """add / edit one connection; fields that do not apply to the chosen type are hidden"""
+    def __init__(self, parent, conn):
+        super().__init__(title='Подключение', transient_for=parent, modal=True); ui.style_app(self); self.set_default_size(min(620, ui.screen_size()[0] - 20), min(600, ui.screen_size()[1] - 140))
+        self.add_buttons('Отмена', Gtk.ResponseType.CANCEL, 'Сохранить', Gtk.ResponseType.OK); self.conn = dict(conn); self.rows = {}
+        g = Gtk.Grid(row_spacing=8, column_spacing=12); g.set_border_width(12); self.grid = g; self.n = 0
+        sc = Gtk.ScrolledWindow(); sc.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC); sc.add(g); self.get_content_area().pack_start(sc, True, True, 0)   # buttons stay reachable on a small screen
+        self.kind = Gtk.ComboBoxText(); [self.kind.append(k, t) for k, t in sv.KINDS]; self.kind.set_active_id(conn['kind']); self.kind.connect('changed', lambda *_: self.relayout())
+        self.name = self.entry(conn['name']); self.host = self.entry(conn['host']); self.port = self.entry(str(conn['port'])); self.user = self.entry(conn['user'])
+        self.key = Gtk.ComboBoxText.new_with_entry(); self.key.append_text('')
+        for priv, _pub, _fp in sv.keys(): self.key.append_text(priv)
+        self.key.get_child().set_text(conn['key']); self.key.get_child().connect('focus-in-event', lambda *_: ui.osk(True))
+        self.extra = self.entry(conn['extra']); self.startup = self.entry(conn['startup']); self.path = self.entry(conn['path'])
+        self.device = Gtk.ComboBoxText.new_with_entry(); [self.device.append_text(d) for d in sv.serial_devices() or ['/dev/ttyUSB0']]; self.device.get_child().set_text(conn['device'])
+        self.baud = Gtk.ComboBoxText.new_with_entry(); [self.baud.append_text(b) for b in sv.BAUDS]; self.baud.get_child().set_text(str(conn['baud']))
+        self.domain = self.entry(conn['domain']); self.size = self.entry(conn['size'])
+        self.add_row('type', 'Тип', self.kind); self.add_row('name', 'Название', self.name); self.add_row('host', 'Адрес (имя или IP)', self.host); self.add_row('port', 'Порт', self.port)
+        self.add_row('user', 'Пользователь', self.user)
+        self.add_row('key', 'Файл ключа SSH', self.key, 'Пусто — вход по паролю (спросит в терминале) или ключами по умолчанию.')
+        self.add_row('extra', 'Доп. параметры ssh', self.extra, 'Например: -L 8080:localhost:80  (проброс порта) или -J jumphost')
+        self.add_row('startup', 'Команда после входа', self.startup, 'Например: tmux new -As main')
+        self.add_row('path', 'Папка на сервере (sshfs)', self.path)
+        self.add_row('device', 'Устройство', self.device); self.add_row('baud', 'Скорость, бод', self.baud)
+        self.add_row('domain', 'Домен (RDP)', self.domain); self.add_row('size', 'Размер окна (RDP)', self.size, 'Пусто — на весь экран; или, например, 1280x720')
+        self.err = Gtk.Label(label='', xalign=0); self.err.set_line_wrap(True); self.get_content_area().pack_start(self.err, False, False, 6)
+        self.show_all(); self.relayout()
+
+    def entry(self, text):
+        e = Gtk.Entry(); e.set_text(text); e.set_hexpand(True); e.connect('focus-in-event', lambda *_: ui.osk(True)); return e
+
+    def add_row(self, key, label, widget, tip=None):
+        l = Gtk.Label(label=label, xalign=0); self.grid.attach(l, 0, self.n, 1, 1); self.grid.attach(widget, 1, self.n, 1, 1); self.n += 1; items = [l, widget]
+        if tip:
+            t = Gtk.Label(label=tip, xalign=0); t.get_style_context().add_class('small'); t.set_line_wrap(True); self.grid.attach(t, 1, self.n, 1, 1); self.n += 1; items.append(t)
+        self.rows[key] = items
+
+    def relayout(self):
+        k = self.kind.get_active_id()
+        show = {'ssh': {'name', 'type', 'host', 'port', 'user', 'key', 'extra', 'startup', 'path'}, 'serial': {'name', 'type', 'device', 'baud'}, 'rdp': {'name', 'type', 'host', 'port', 'user', 'domain', 'size'},
+                'vnc': {'name', 'type', 'host', 'port'}, 'telnet': {'name', 'type', 'host', 'port'}}[k]
+        for key, items in self.rows.items():
+            for w in items: w.set_visible(key in show)
+        if self.port.get_text() in ('', '22', '3389', '5900', '23') and k in sv.DEFAULT_PORT: self.port.set_text(str(sv.DEFAULT_PORT[k]))
+
+    def result(self):
+        c = dict(self.conn); c.update(kind=self.kind.get_active_id(), name=self.name.get_text().strip(), host=self.host.get_text().strip(), user=self.user.get_text().strip(),
+                                       key=self.key.get_child().get_text().strip(), extra=self.extra.get_text().strip(), startup=self.startup.get_text().strip(), path=self.path.get_text().strip() or '/',
+                                       device=self.device.get_child().get_text().strip(), baud=self.baud.get_child().get_text().strip(), domain=self.domain.get_text().strip(), size=self.size.get_text().strip())
+        try: c['port'] = int(self.port.get_text().strip() or sv.DEFAULT_PORT.get(c['kind'], 0))
+        except ValueError: c['port'] = 0
+        return c
+
+
+class Servers(Gtk.Window):
+    def __init__(self, args):
+        super().__init__(title='Серверы'); ui.init_theme(); ui.style_app(self); self.get_style_context().add_class('rssh')
+        p = Gtk.CssProvider(); p.load_from_data(CSS + (CSS_H if ui.HACKER else b'')); Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), p, Gtk.STYLE_PROVIDER_PRIORITY_USER + 2)
+        sw, sh = ui.screen_size(); self.set_default_size(min(1180, sw), (sh - 70) if sw < 1000 else min(740, sh - 60)); self.set_position(Gtk.WindowPosition.CENTER)
+        if sw <= 1100: self.maximize()
+        self.conns = sv.load(); self.sessions = []; self.font_size = 11
+        self.nb = Gtk.Notebook(); self.nb.set_scrollable(True); self.add(self.nb)
+        self.nb.append_page(self.build_list(), self.tab_label('Серверы', None)); self.refresh()
+        self.connect('delete-event', self.on_close); self.show_all()
+        for a in args:
+            if a == '--local': self.local_shell()
+            else:
+                c = next((c for c in self.conns if c['name'] == a), None) or sv.parse_quick(a)
+                if c: self.connect_to(c)
+
+    # ---- list page
+    def build_list(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8); box.set_border_width(10)
+        top = Gtk.Box(spacing=8); self.quick = Gtk.Entry(); self.quick.set_placeholder_text('быстро: user@host[:порт]'); self.quick.connect('activate', lambda *_: self.do_quick())
+        self.quick.connect('focus-in-event', lambda *_: ui.osk(True)); top.pack_start(self.quick, True, True, 0)
+        go = Gtk.Button(label='Подключиться'); go.connect('clicked', lambda _b: self.do_quick()); top.pack_start(go, False, False, 0); box.pack_start(top, False, False, 0)
+        bar = Gtk.Box(spacing=8)
+        for txt, cb in (('+ Добавить', lambda: self.edit(None)), ('Локальный терминал', self.local_shell), ('Ключи SSH', self.keys_dialog), ('Папки серверов', self.open_servers_dir)):
+            b = Gtk.Button(label=txt); b.connect('clicked', lambda _b, f=cb: f()); bar.pack_start(b, False, False, 0)
+        box.pack_start(bar, False, False, 0)
+        self.empty = Gtk.Label(label='', xalign=0); self.empty.get_style_context().add_class('small'); self.empty.set_line_wrap(True); box.pack_start(self.empty, False, False, 0)
+        self.lb = Gtk.ListBox(); self.lb.set_selection_mode(Gtk.SelectionMode.NONE); sc = Gtk.ScrolledWindow(); sc.add(self.lb); box.pack_start(sc, True, True, 0)
+        return box
+
+    def refresh(self):
+        for ch in self.lb.get_children(): self.lb.remove(ch)
+        self.empty.set_text('' if self.conns else 'Здесь будут ваши серверы. Нажмите «+ Добавить» или введите user@host выше. Пароли не сохраняются: программа спросит пароль в терминале.')
+        for c in self.conns:
+            row = Gtk.ListBoxRow(); h = Gtk.Box(spacing=12); h.set_margin_top(4); h.set_margin_bottom(4)
+            chip = Gtk.Label(label={'ssh': 'SSH', 'serial': 'COM', 'rdp': 'RDP', 'vnc': 'VNC', 'telnet': 'TEL'}[c['kind']]); chip.get_style_context().add_class('chip'); h.pack_start(chip, False, False, 4)
+            col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL); n = Gtk.Label(label=c['name'], xalign=0); n.get_style_context().add_class('sname'); l = Gtk.Label(label=sv.label(c), xalign=0); l.get_style_context().add_class('shost')
+            col.pack_start(n, False, False, 0); col.pack_start(l, False, False, 0); h.pack_start(col, True, True, 0)
+            if c['kind'] == 'ssh' and sv.is_mounted(sv.mount_dir(c)):
+                m = Gtk.Label(label='папка подключена'); m.get_style_context().add_class('chip'); h.pack_start(m, False, False, 0)
+            b = Gtk.Button(label='Подключить'); b.connect('clicked', lambda _b, c=c: self.connect_to(c)); h.pack_start(b, False, False, 0)
+            mb = Gtk.MenuButton(label='⋯'); pop = Gtk.Popover(); v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4); v.set_border_width(8)
+            items = [('Изменить', lambda c=c: self.edit(c)), ('Дублировать', lambda c=c: self.duplicate(c)), ('Удалить', lambda c=c: self.delete(c))]
+            if c['kind'] == 'ssh':
+                items = [('Подключить как папку (sshfs)', lambda c=c: self.mount(c)), ('Открыть папку в Rembly Code', lambda c=c: self.open_mount(c, 'rembly-code')), ('Открыть папку в Файлах', lambda c=c: self.open_mount(c, 'thunar')),
+                         ('Отключить папку', lambda c=c: self.unmount(c)), ('Отправить мой ключ на сервер', lambda c=c: self.send_key(c))] + items
+            for txt, cb in items:
+                bb = Gtk.Button(label=txt); bb.connect('clicked', lambda _b, f=cb, p=pop: (p.popdown(), f())); v.pack_start(bb, False, False, 0)
+            v.show_all(); pop.add(v); mb.set_popover(pop); h.pack_start(mb, False, False, 0)
+            row.add(h); self.lb.add(row)
+        self.lb.show_all()
+
+    # ---- connections
+    def do_quick(self):
+        c = sv.parse_quick(self.quick.get_text())
+        if c is None: self.msg('Не понял адрес. Примеры: root@192.168.1.10, user@example.org:2222'); return
+        self.connect_to(c)
+
+    def connect_to(self, c):
+        try: argv = sv.build_command(c)
+        except ValueError as e: self.msg('Подключение невозможно: %s' % e); return
+        miss = sv.tools_missing(c)
+        if miss: self.offer_install(miss); return
+        s = Session(self, c['name'], argv, hint='Подключение: %s\n%s' % (sv.label(c), sv.hint(c)), auto=(c['kind'] == 'ssh')); self.add_session(s)
+
+    def local_shell(self):
+        s = Session(self, 'Терминал', ['/bin/bash', '-l'], cwd=os.path.expanduser('~')); self.add_session(s)
+
+    def add_session(self, s):
+        self.sessions.append(s); n = self.nb.append_page(s, self.tab_label(s.title, s)); self.nb.set_tab_reorderable(s, True); s.show_all(); s.bar.hide(); self.nb.set_current_page(n); s.start()
+
+    def tab_label(self, text, sess):
+        box = Gtk.Box(spacing=4); l = Gtk.Label(label=text); l.set_width_chars(8); l.set_max_width_chars(20); l.set_ellipsize(Pango.EllipsizeMode.END); box.pack_start(l, True, True, 0)
+        if sess is not None:
+            x = Gtk.Button(label='✕'); x.get_style_context().add_class('tabx'); x.set_relief(Gtk.ReliefStyle.NONE); x.connect('clicked', lambda _b: self.close_session(sess)); box.pack_start(x, False, False, 0)
+        box.show_all(); return box
+
+    def close_session(self, s):
+        if s.alive and s.pid:
+            d = Gtk.MessageDialog(transient_for=self, modal=True, message_type=Gtk.MessageType.QUESTION, buttons=Gtk.ButtonsType.YES_NO, text='Соединение «%s» ещё открыто. Закрыть?' % s.title); ui.style_app(d)
+            r = d.run(); d.destroy()
+            if r != Gtk.ResponseType.YES: return
+        s.close(); n = self.nb.page_num(s)
+        if n >= 0: self.nb.remove_page(n)
+        if s in self.sessions: self.sessions.remove(s)
+
+    def change_font(self, d):
+        self.font_size = max(8, min(24, self.font_size + d))
+        for s in self.sessions: s.term.set_font(Pango.FontDescription('Fira Code %d' % self.font_size))
+
+    def on_close(self, *a):
+        live = [s for s in self.sessions if s.alive and s.pid]
+        if live:
+            d = Gtk.MessageDialog(transient_for=self, modal=True, message_type=Gtk.MessageType.QUESTION, buttons=Gtk.ButtonsType.YES_NO, text='Открытых соединений: %d. Закрыть всё и выйти?' % len(live)); ui.style_app(d)
+            r = d.run(); d.destroy()
+            if r != Gtk.ResponseType.YES: return True
+        for s in self.sessions: s.close()
+        Gtk.main_quit(); return False
+
+    # ---- editing
+    def edit(self, c):
+        new = c is None; d = ConnDialog(self, sv.new_conn() if new else c)
+        while True:
+            r = d.run()
+            if r != Gtk.ResponseType.OK: break
+            res = d.result(); bad = sv.validate(res)
+            if bad: d.err.set_text('Исправьте: ' + '; '.join(bad)); continue
+            if new: self.conns.append(res)
+            else: self.conns[self.conns.index(c)] = res
+            sv.save(self.conns); self.refresh(); break
+        d.destroy()
+
+    def duplicate(self, c):
+        n = dict(c); n['name'] = c['name'] + ' (копия)'; self.conns.append(n); sv.save(self.conns); self.refresh()
+
+    def delete(self, c):
+        d = Gtk.MessageDialog(transient_for=self, modal=True, message_type=Gtk.MessageType.QUESTION, buttons=Gtk.ButtonsType.YES_NO, text='Удалить «%s» из списка? (Сам сервер не затрагивается.)' % c['name']); ui.style_app(d)
+        r = d.run(); d.destroy()
+        if r == Gtk.ResponseType.YES: self.conns.remove(c); sv.save(self.conns); self.refresh()
+
+    def msg(self, text):
+        d = Gtk.MessageDialog(transient_for=self, modal=True, message_type=Gtk.MessageType.INFO, buttons=Gtk.ButtonsType.OK, text=text); ui.style_app(d); d.run(); d.destroy()
+
+    def offer_install(self, missing):
+        pk = sorted({tool_label(m) for m in missing})
+        d = Gtk.MessageDialog(transient_for=self, modal=True, message_type=Gtk.MessageType.QUESTION, text='Не установлено: %s.\nУстановить сейчас (нужна сеть, пакеты: %s)?' % (', '.join(missing), ' '.join(pk)))
+        d.add_button('Нет', Gtk.ResponseType.NO); d.add_button('Установить', Gtk.ResponseType.YES); ui.style_app(d); r = d.run(); d.destroy()
+        if r == Gtk.ResponseType.YES: self.add_session(Session(self, 'Установка', ['/bin/sh', '-c', 'apt-get update && apt-get install -y --no-install-recommends %s; echo; echo "Готово. Закройте вкладку и подключитесь снова."' % ' '.join(pk)]))
+
+    # ---- remote folders (sshfs)
+    def mount(self, c):
+        ok, why = sv.fuse_ready()
+        if not ok: self.msg('Папку подключить нельзя: %s' % why); return
+        t = sv.mount_dir(c)
+        if sv.is_mounted(t): self.msg('Папка уже подключена: %s' % t); return
+        os.makedirs(t, exist_ok=True)
+
+        def done(sess, code):
+            if code == 0 and sv.is_mounted(t):
+                sess.show_bar('Готово: папка сервера открыта как %s' % t); self.refresh(); return False
+            sess.show_bar('sshfs завершился с кодом %s: папка не подключена (проверьте адрес, пароль/ключ, путь %s)' % (code, c.get('path') or '/')); return False
+        self.add_session(Session(self, 'Папка: ' + c['name'], sv.sshfs_command(c, t), hint='Подключаю %s как папку %s (пароль вводится здесь)' % (sv.label(c), t), on_done=done))
+
+    def open_mount(self, c, prog):
+        t = sv.mount_dir(c)
+        if not sv.is_mounted(t): self.msg('Папка не подключена. Сначала «Подключить как папку (sshfs)».'); return
+        subprocess.Popen([prog, t], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def unmount(self, c):
+        t = sv.mount_dir(c)
+        if not sv.is_mounted(t): self.msg('Папка не подключена.'); return
+        import shutil
+        prog = next((p for p in ('fusermount3', 'fusermount') if shutil.which(p)), None)                  # sshfs 3 comes with fusermount3, older FUSE with fusermount
+        r = subprocess.run([prog, '-u', t] if prog else ['umount', t], capture_output=True, text=True)
+        if r.returncode != 0: self.msg('Не удалось отключить (закройте программы, которые её используют): %s' % r.stderr.strip()[:200])
+        self.refresh()
+
+    def open_servers_dir(self):
+        d = os.path.join(os.path.expanduser('~'), 'Servers'); os.makedirs(d, exist_ok=True)
+        subprocess.Popen(['thunar', d], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    # ---- keys
+    def send_key(self, c):
+        ks = sv.keys()
+        if not ks: self.msg('У вас ещё нет ключа. Откройте «Ключи SSH» и создайте его.'); return
+        own = os.path.expanduser(c.get('key') or '') + '.pub'
+        key = own if c.get('key') and os.path.exists(own) else ks[0][1]
+        self.add_session(Session(self, 'Ключ → ' + c['name'], sv.copy_id_command(c, key), hint='Отправляю %s на %s (введите пароль сервера один раз)' % (os.path.basename(key), sv.label(c))))
+
+    def keys_dialog(self):
+        d = Gtk.Dialog(title='Ключи SSH', transient_for=self, modal=True); ui.style_app(d); d.set_default_size(min(700, ui.screen_size()[0] - 20), 420); d.add_button('Закрыть', Gtk.ResponseType.CLOSE)
+        box = d.get_content_area(); box.set_border_width(12); box.set_spacing(8)
+        info = Gtk.Label(label='Вход по ключу безопаснее пароля. Создайте ключ, затем «Отправить мой ключ на сервер» в меню сервера (⋯) или добавьте публичный ключ в ~/.ssh/authorized_keys вручную.', xalign=0)
+        info.set_line_wrap(True); box.pack_start(info, False, False, 0)
+        tv = Gtk.TextView(); tv.set_editable(False); tv.set_wrap_mode(Gtk.WrapMode.CHAR); tv.get_style_context().add_class('mono'); sc = Gtk.ScrolledWindow(); sc.add(tv); box.pack_start(sc, True, True, 0)
+
+        def show():
+            ks = sv.keys(); txt = ''
+            if not ks: txt = 'Ключей нет.'
+            for priv, pub, fp in ks:
+                try: txt += '%s\n%s\n%s\n\n' % (priv, fp, open(pub).read().strip())
+                except OSError: pass
+            tv.get_buffer().set_text(txt)
+        show()
+        row = Gtk.Box(spacing=8)
+
+        def create():
+            p = os.path.join(sv.ssh_dir(), 'id_ed25519')
+            if os.path.exists(p): self.msg('Ключ %s уже есть. Он не будет перезаписан.' % p); return
+            dd = Gtk.Dialog(title='Новый ключ', transient_for=d, modal=True); ui.style_app(dd); dd.add_buttons('Отмена', Gtk.ResponseType.CANCEL, 'Создать', Gtk.ResponseType.OK)
+            e = Gtk.Entry(); e.set_visibility(False); e.set_placeholder_text('пароль на ключ (можно пусто)'); e.connect('focus-in-event', lambda *_: ui.osk(True))
+            lab = Gtk.Label(label='ed25519, файл %s' % p, xalign=0); b = dd.get_content_area(); b.set_border_width(12); b.set_spacing(8); b.pack_start(lab, False, False, 0); b.pack_start(e, False, False, 0); dd.show_all()
+            r = dd.run(); pw = e.get_text(); dd.destroy()
+            if r != Gtk.ResponseType.OK: return
+            os.makedirs(sv.ssh_dir(), mode=0o700, exist_ok=True)
+            res = subprocess.run(sv.keygen_command(p, pw), capture_output=True, text=True)
+            if res.returncode != 0: self.msg('ssh-keygen: %s' % res.stderr.strip()[:300])
+            show()
+
+        def copy():
+            ks = sv.keys()
+            if ks:
+                Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).set_text(open(ks[0][1]).read().strip(), -1); self.msg('Публичный ключ скопирован в буфер обмена.')
+        for txt, cb in (('Создать ключ ed25519', create), ('Копировать публичный ключ', copy)):
+            b = Gtk.Button(label=txt); b.connect('clicked', lambda _b, f=cb: f()); row.pack_start(b, False, False, 0)
+        box.pack_start(row, False, False, 0); d.show_all(); d.run(); d.destroy()
+
+
+if __name__ == '__main__':
+    w = Servers(sys.argv[1:]); Gtk.main()
