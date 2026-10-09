@@ -12,9 +12,9 @@ import rembley_ram as rr
 a = sys.argv[1:]
 claim = int(a[a.index('--claim') + 1]) if '--claim' in a else None
 r = rr.check(claim_mb=claim, full='--full' in a)
-os.makedirs('/var/lib/rembley', exist_ok=True)
-try: json.dump(r, open('/var/lib/rembley/ramtest.json', 'w'), indent=1)
-except OSError: pass
+try:
+    os.makedirs('/var/lib/rembley', exist_ok=True); json.dump(r, open('/var/lib/rembley/ramtest.json', 'w'), indent=1)
+except OSError: pass                      # read-only system: the result is still printed
 if '--json' in a: print(json.dumps(r, indent=1)); sys.exit({'ok': 0, 'warn': 0, 'mismatch': 2, 'FAIL': 3}[r['verdict']])
 m = r['measured']
 print('Доступно системе:   %d МБ' % m['usable_mb']); print('Физически (ядро):   %d МБ   (зарезервировано под модем/графику/ядро: %d МБ)' % (m['physical_mb'], m['reserved_mb']))
