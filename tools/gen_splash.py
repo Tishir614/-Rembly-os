@@ -7,33 +7,32 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 W, H = 800, 1280
 OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'initramfs')
-LOGO = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'assets', 'logo-original.png')
+LOGO = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'rootfs', 'overlay', 'usr', 'share', 'rembley', 'logo.png')   # fox + REMBLY OS wordmark (tools/gen_brand.py)
 def font(sz, bold=True):
     for p in glob.glob('/usr/share/fonts/**/NotoSans-%s.*tf' % ('Bold' if bold else 'Regular'), recursive=True) + glob.glob('/usr/share/fonts/**/DejaVuSans%s.ttf' % ('-Bold' if bold else ''), recursive=True):
         return ImageFont.truetype(p, sz)
     return ImageFont.load_default()
 logo = Image.open(LOGO).convert('RGB')
-bg = logo.getpixel((6, 6))                               # the logo's own near-black background colour
+bg = (0, 0, 0)                                           # pure black, like the logo
 img = Image.new('RGB', (W, H), bg)
-side = 780
+side = 800
 lg = logo.resize((side, side), Image.LANCZOS)
-mask = Image.new('L', (side, side), 0); ImageDraw.Draw(mask).rectangle([70, 70, side - 70, side - 70], fill=255)
-mask = mask.filter(ImageFilter.GaussianBlur(45))             # feather the edges so the logo melts into the background
-img.paste(lg, ((W - side) // 2, 190), mask)
+mask = Image.new('L', (side, side), 255)
+img.paste(lg, ((W - side) // 2, 150), mask)
 dr = ImageDraw.Draw(img)
 def centered(text, yy, f, fill):
     w = dr.textlength(text, font=f); dr.text(((W - w) / 2, yy), text, font=f, fill=fill)
-centered('запуск системы…', 1040, font(26, False), (170, 160, 210))
+centered('запуск системы…', 1040, font(26, False), (150, 150, 150))
 TX0, TX1, TY, TH = 140, 660, 1112, 14                    # progress track (stage 2 fills it step by step, see usr/sbin/init)
 def track(d, filled):
-    d.rounded_rectangle([TX0, TY, TX1, TY + TH], radius=TH // 2, fill=(40, 32, 78))
+    d.rounded_rectangle([TX0, TY, TX1, TY + TH], radius=2, fill=(38, 38, 38))
     if filled > 0:
         x = TX0 + int((TX1 - TX0) * filled)
         for i in range(TX0, x):                          # purple -> pink gradient
-            t = (i - TX0) / (TX1 - TX0); c = (int(150 + 90 * t), int(110 - 20 * t), int(255 - 40 * t))
+            t = (i - TX0) / (TX1 - TX0); c = (int(255 - 100 * t),) * 3
             d.line([i, TY + 2, i, TY + TH - 2], fill=c)
-        d.ellipse([x - TH // 2 + 1, TY + 1, x + TH // 2 - 1, TY + TH - 1], fill=(int(150 + 90 * filled), int(110 - 20 * filled), int(255 - 40 * filled)))
-        d.ellipse([TX0 + 1, TY + 1, TX0 + TH - 1, TY + TH - 1], fill=(150, 110, 255))
+        d.rectangle([x - 2, TY, x, TY + TH], fill=(int(255 - 100 * filled),) * 3)
+        pass
 track(dr, 0)
 img = img.convert('RGBA')
 rgb = np.asarray(img.convert('RGB'))

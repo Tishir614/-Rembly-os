@@ -16,8 +16,8 @@ def lerp(a, b, t): return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
 
 
 PAL = {
-    'active':   dict(t0=(104, 54, 88), t1=(62, 34, 54), b0=(238, 160, 196), b1=(150, 84, 122), line=(255, 214, 230), glow=(255, 150, 196)),
-    'inactive': dict(t0=(62, 46, 58), t1=(44, 32, 42), b0=(112, 84, 104), b1=(70, 52, 66), line=(140, 112, 130), glow=(100, 80, 96)),
+    'active':   dict(t0=(36, 36, 36), t1=(10, 10, 10), b0=(238, 238, 238), b1=(120, 120, 120), line=(255, 255, 255), glow=(255, 255, 255)),
+    'inactive': dict(t0=(26, 26, 26), t1=(14, 14, 14), b0=(96, 96, 96), b1=(52, 52, 52), line=(120, 120, 120), glow=(90, 90, 90)),
 }
 
 
@@ -56,8 +56,8 @@ for st in ('active', 'inactive'):
 
 # ---- buttons: coloured discs with a glyph ----
 BW_, BH_ = 40, 34
-COL = {'close': ((255, 140, 170), (226, 84, 134)), 'maximize': ((255, 196, 220), (232, 140, 180)), 'hide': ((236, 190, 210), (190, 130, 164)),
-       'menu': ((255, 214, 230), (214, 150, 184)), 'shade': ((236, 190, 210), (190, 130, 164)), 'stick': ((255, 196, 220), (214, 120, 170))}
+COL = {'close': ((255, 255, 255), (205, 205, 205)), 'maximize': ((236, 236, 236), (176, 176, 176)), 'hide': ((210, 210, 210), (148, 148, 148)),
+       'menu': ((236, 236, 236), (176, 176, 176)), 'shade': ((210, 210, 210), (148, 148, 148)), 'stick': ((236, 236, 236), (176, 176, 176))}
 
 
 def glyph(d, kind, toggled, cx, cy, c, k=4):
@@ -76,7 +76,7 @@ def button(kind, state, toggled=False):
     s = 4; im = Image.new('RGBA', (BW_ * s, BH_ * s), (0, 0, 0, 0)); d = ImageDraw.Draw(im)
     cx, cy, r = BW_ * s // 2, BH_ * s // 2, 9 * s
     c0, c1 = COL[kind]
-    if state in ('inactive',): c0, c1 = (92, 80, 140), (70, 60, 112)
+    if state in ('inactive',): c0, c1 = (76, 76, 76), (54, 54, 54)
     if state == 'prelight': c0, c1 = lerp(c0, (255, 255, 255), .30), lerp(c1, (255, 255, 255), .25)
     if state == 'pressed': c0, c1 = lerp(c0, (0, 0, 0), .30), lerp(c1, (0, 0, 0), .30)
     if state in ('active', 'prelight'):                                        # soft glow
@@ -87,7 +87,7 @@ def button(kind, state, toggled=False):
         y = cy - r + i; t = i / (2 * r); dd.line([cx - r, y, cx + r, y], fill=lerp(c0, c1, t) + (255,))
     m = Image.new('L', im.size, 0); ImageDraw.Draw(m).ellipse([cx - r, cy - r, cx + r, cy + r], fill=255)
     disc.putalpha(m); im = Image.alpha_composite(im, disc); d = ImageDraw.Draw(im)
-    glyph(d, kind, toggled, cx, cy, (255, 255, 255, 255) if state != 'inactive' else (200, 190, 230, 255))
+    glyph(d, kind, toggled, cx, cy, (8, 8, 8, 255) if state != 'inactive' else (190, 190, 190, 255))
     return im.resize((BW_, BH_), Image.LANCZOS)
 
 
@@ -96,10 +96,10 @@ for kind in ('close', 'maximize', 'hide', 'menu', 'shade', 'stick'):
         for st in ('active', 'inactive', 'prelight', 'pressed'):
             button(kind, st, tg).save(os.path.join(OUT, '%s%s-%s.png' % (kind, '-toggled' if tg else '', st)))
 
-open(os.path.join(OUT, 'themerc'), 'w').write('''active_text_color=#ffe3ee
-active_text_shadow_color=#3a1a2e
-inactive_text_color=#b99aa9
-inactive_text_shadow_color=#241520
+open(os.path.join(OUT, 'themerc'), 'w').write('''active_text_color=#ffffff
+active_text_shadow_color=#000000
+inactive_text_color=#9a9a9a
+inactive_text_shadow_color=#000000
 button_offset=4
 button_spacing=0
 frame_border_top=2

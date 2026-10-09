@@ -29,8 +29,8 @@ class TaskMan(Gtk.Window):
         v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12); v.set_border_width(16); self.add(v)
         top = ui.card(); v.pack_start(top, False, False, 0)
         self.head = Gtk.Label(xalign=0); self.head.get_style_context().add_class('rcard-title'); top.pack_start(self.head, False, False, 0)
-        self.mem = ui.Meter('Память', (0.95, 0.55, 0.75), (0.78, 0.45, 0.78), 'M'); top.pack_start(self.mem, False, False, 0)
-        self.cpu = ui.Meter('Процессор', (1.0, 0.62, 0.55), (1.0, 0.45, 0.60), 'C'); top.pack_start(self.cpu, False, False, 0)
+        self.mem = ui.Meter('Память', (1.0, 1.0, 1.0), (0.6, 0.6, 0.6), 'M'); top.pack_start(self.mem, False, False, 0)
+        self.cpu = ui.Meter('Процессор', (0.9, 0.9, 0.9), (0.5, 0.5, 0.5), 'C'); top.pack_start(self.cpu, False, False, 0)
         self.store = Gtk.ListStore(int, str, float, float, float)
         self.tree = Gtk.TreeView(model=self.store); self.tree.set_headers_clickable(True)
         for i, (t, w) in enumerate((('PID', 80), ('Программа', 300), ('ЦП', 170), ('Память', 190))):

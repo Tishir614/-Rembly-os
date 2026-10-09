@@ -55,14 +55,14 @@ class SquareAvatar(Gtk.DrawingArea):
     def __init__(self, size):
         super().__init__(); self.size = size; self.set_size_request(size, size)
         self.pb = None
-        for p in (CFG + '/avatar-sakura.png', SHARE + '/avatar-sakura.png', CFG + '/avatar.png', SHARE + '/avatar.png'):
+        for p in (CFG + '/avatar.png', SHARE + '/avatar.png'):
             try: self.pb = GdkPixbuf.Pixbuf.new_from_file_at_size(p, size - 6, size - 6); break
             except Exception: continue
 
     def do_draw(self, cr):
         s = self.size
         if self.pb is not None: Gdk.cairo_set_source_pixbuf(cr, self.pb, 3, 3); cr.paint()
-        cr.set_source_rgba(1.0, 0.82, 0.90, 0.95); cr.set_line_width(2); cr.rectangle(1, 1, s - 2, s - 2); cr.stroke()
+        cr.set_source_rgba(1, 1, 1, 0.95); cr.set_line_width(2); cr.rectangle(1, 1, s - 2, s - 2); cr.stroke()
 
 
 class Visualizer(Gtk.DrawingArea):
@@ -94,7 +94,7 @@ class Visualizer(Gtk.DrawingArea):
         w, h = self.get_allocated_width(), self.get_allocated_height(); gap = 6; bw = (w - gap * (self.N - 1)) / self.N
         for i, v in enumerate(self.v):
             bh = max(3, v * (h - 6)); x = i * (bw + gap)
-            cr.set_source_rgba(0.99, 0.82, 0.88, 0.95); cr.rectangle(x, h - bh, bw, bh); cr.fill()
+            cr.set_source_rgba(0.96, 0.96, 0.96, 0.95); cr.rectangle(x, h - bh, bw, bh); cr.fill()
 
 
 class Home(Win):
@@ -129,7 +129,7 @@ class Home(Win):
 
     # ---- window 1: audio bars ----
     def build_visualizer(self, x, y, w, h):
-        g = Glass(radius=3, tint=(0.20, 0.13, 0.19, 0.70)); g.set_border_width(22)
+        g = Glass(radius=3, tint=(0.04, 0.04, 0.04, 0.70)); g.set_border_width(22)
         self.viz = Visualizer(); g.pack_start(self.viz, True, True, 0)
         self.put(g, x, y, w, h)
         self.add_events(Gdk.EventMask.VISIBILITY_NOTIFY_MASK)
@@ -146,13 +146,13 @@ class Home(Win):
         except Exception: ram = '?'
         if DEMO: osn, ram = 'Ubuntu 20.04.6 LTS', '1126 MiB / 1843 MiB'
         if not hasattr(self, '_pk'): self._pk = len(glob.glob('/var/lib/dpkg/info/*.list')) if not DEMO else 587
-        return ['%s %s' % (osn.replace(' LTS', ''), arch), ram, '%d (dpkg)' % self._pk, 'xfce4-terminal', 'Rembley Shell', 'github.com/Tishir614/-Rembly-os']
+        return ['%s %s' % (osn.replace(' LTS', ''), arch), ram, '%d (dpkg)' % self._pk, 'xfce4-terminal', 'Rembly Shell', 'github.com/Tishir614/-Rembly-os']
 
     def build_fetch(self, x, y, w, h):
-        g = Glass(radius=3, tint=(0.20, 0.13, 0.19, 0.72)); g.set_border_width(18)
+        g = Glass(radius=3, tint=(0.04, 0.04, 0.04, 0.72)); g.set_border_width(18)
         g.pack_start(SquareAvatar(118), False, False, 0)
         col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2); col.set_margin_start(22); col.set_valign(Gtk.Align.CENTER)
-        t = Gtk.Label(label='R E M B L E Y | O S', xalign=0); t.get_style_context().add_class('ff-title'); col.pack_start(t, False, False, 0)
+        t = Gtk.Label(label='R E M B L Y | O S', xalign=0); t.get_style_context().add_class('ff-title'); col.pack_start(t, False, False, 0)
         sep = '-' * 24
         for text, cls in ((sep, 'ff-sep'),):
             l = Gtk.Label(label=text, xalign=0); l.get_style_context().add_class(cls); col.pack_start(l, False, False, 0)
@@ -161,7 +161,7 @@ class Home(Win):
             l = Gtk.Label(label=line, xalign=0); l.get_style_context().add_class('ff-line'); l.set_ellipsize(Pango.EllipsizeMode.END); col.pack_start(l, False, False, 0); self.ff.append(l)
         l = Gtk.Label(label=sep, xalign=0); l.get_style_context().add_class('ff-sep'); col.pack_start(l, False, False, 0)
         sw_ = Gtk.DrawingArea(); sw_.set_size_request(200, 14)
-        cols = [(.86, .42, .60), (.95, .60, .72), (.98, .78, .85), (.72, .50, .70), (.58, .42, .60), (.96, .88, .90), (.82, .30, .46), (.50, .30, .46)]
+        cols = [(1, 1, 1), (.86, .86, .86), (.72, .72, .72), (.58, .58, .58), (.45, .45, .45), (.33, .33, .33), (.22, .22, .22), (.12, .12, .12)]
         def draw(wd, cr):
             for i, c in enumerate(cols): cr.set_source_rgb(*c); cr.rectangle(i * 24, 2, 20, 8); cr.fill()
         sw_.connect('draw', draw); col.pack_start(sw_, False, False, 2)
@@ -175,7 +175,7 @@ class Home(Win):
 
     # ---- window 3: apps ----
     def build_apps(self, x, y, w, h):
-        g = Glass(radius=3, tint=(0.18, 0.11, 0.16, 0.78), orientation=Gtk.Orientation.VERTICAL); g.set_border_width(14)
+        g = Glass(radius=3, tint=(0.04, 0.04, 0.04, 0.78), orientation=Gtk.Orientation.VERTICAL); g.set_border_width(14)
         grid = Gtk.Grid(column_homogeneous=True, row_homogeneous=True, row_spacing=2, column_spacing=2)
         for i, (name, ic, cmd) in enumerate(avail_apps()[:12]): grid.attach(self.tile(name, ic, cmd, 46), i % 4, i // 4, 1, 1)
         g.pack_start(grid, True, True, 0)
@@ -189,7 +189,7 @@ class Launcher(Win):
         super().__init__(wall, blur, (0, BAR), type=Gtk.WindowType.TOPLEVEL)
         self.set_decorated(False); self.set_default_size(w, h); self.move(0, BAR); self.set_type_hint(Gdk.WindowTypeHint.DIALOG)
         self.set_skip_taskbar_hint(True); self.set_keep_above(True)
-        outer = Glass(orientation=Gtk.Orientation.VERTICAL, spacing=8, radius=8, tint=(0.14, 0.08, 0.12, 0.84)); outer.set_border_width(16)
+        outer = Glass(orientation=Gtk.Orientation.VERTICAL, spacing=8, radius=8, tint=(0.04, 0.04, 0.04, 0.84)); outer.set_border_width(16)
         self.add(outer)
         top = Gtk.Box(spacing=10); self.search = Gtk.Entry(); self.search.set_placeholder_text('Поиск приложений')
         self.search.get_style_context().add_class('rl-search'); self.search.connect('changed', lambda *_: self.fill())
@@ -267,7 +267,7 @@ class QuickPanel(Win):
         self.set_decorated(False); self.set_default_size(w, h); self.move(sw - w - 10, BAR + 4)
         self.set_type_hint(Gdk.WindowTypeHint.DIALOG); self.set_skip_taskbar_hint(True); self.set_keep_above(True)
         self.connect('focus-out-event', lambda *_: (self.hide(), False)[1])
-        box = Glass(orientation=Gtk.Orientation.VERTICAL, spacing=8, radius=8, tint=(0.14, 0.08, 0.12, 0.86)); box.set_border_width(16)
+        box = Glass(orientation=Gtk.Orientation.VERTICAL, spacing=8, radius=8, tint=(0.04, 0.04, 0.04, 0.86)); box.set_border_width(16)
         self.add(box)
         t = Gtk.Label(label='Быстрые настройки', xalign=0); t.get_style_context().add_class('rl-title'); box.pack_start(t, False, False, 4)
         self.bl = backlight_path(); self.ac = audio_ctl()
@@ -343,7 +343,7 @@ class Switcher(Win):
         super().__init__(wall, blur, (0, BAR), type=Gtk.WindowType.TOPLEVEL)
         self.set_decorated(False); self.set_default_size(w, h); self.move(0, BAR); self.set_type_hint(Gdk.WindowTypeHint.DIALOG)
         self.set_skip_taskbar_hint(True); self.set_keep_above(True)
-        outer = Glass(orientation=Gtk.Orientation.VERTICAL, spacing=8, radius=8, tint=(0.14, 0.08, 0.12, 0.88)); outer.set_border_width(16)
+        outer = Glass(orientation=Gtk.Orientation.VERTICAL, spacing=8, radius=8, tint=(0.04, 0.04, 0.04, 0.88)); outer.set_border_width(16)
         self.add(outer)
         top = Gtk.Box(); t = Gtk.Label(label='Открытые окна', xalign=0); t.get_style_context().add_class('rl-title')
         close = Gtk.Button(label='✕'); close.set_relief(Gtk.ReliefStyle.NONE); close.connect('clicked', lambda _b: self.hide())
@@ -391,7 +391,7 @@ class Bar(Win):
         self.status(); self.cur_ws(); self.stats()
 
     def pill(self, x, w):
-        g = Glass(radius=5, spacing=2, tint=(0.13, 0.08, 0.12, 0.90)); g.set_border_width(2)
+        g = Glass(radius=5, spacing=2, tint=(0.04, 0.04, 0.04, 0.90)); g.set_border_width(2)
         g.set_size_request(w, self.PH); self.fixed.put(g, x, 5); self.pills.append((x, 5, w, self.PH)); return g
 
     def btn(self, child, cb, cls='bar-btn'):
@@ -403,7 +403,7 @@ class Bar(Win):
 
     def build_left(self, x):
         p = self.pill(x, 150)
-        try: logo = Gtk.Image.new_from_pixbuf(GdkPixbuf.Pixbuf.new_from_file_at_size(SHARE + '/logo-small.png', 22, 22))
+        try: logo = Gtk.Image.new_from_pixbuf(GdkPixbuf.Pixbuf.new_from_file_at_size(SHARE + '/logo-mark-small.png', 22, 22))
         except Exception: logo = Gtk.Label(label='R')
         p.pack_start(self.btn(logo, lambda: ctl_cmd('launcher')), False, False, 0)
         self.wsb = []
