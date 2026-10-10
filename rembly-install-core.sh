@@ -49,7 +49,6 @@ H
   esac
 done
 
-# UI. rembly-install.sh normally sources the same helper, but the core also works directly.
 if [[ -f "$ROOT/tools/rembly-installer-ui.sh" ]]; then
   # shellcheck source=/dev/null
   . "$ROOT/tools/rembly-installer-ui.sh"
@@ -112,7 +111,6 @@ hash_tree() {
 rootfs_source_id() {
   {
     printf 'rootfs-tree=%s\n' "$(hash_tree rootfs)"
-    [[ -s "$OUT/android-blobs.tar.gz" ]] && printf 'android-blobs=%s\n' "$(sha256sum "$OUT/android-blobs.tar.gz" | awk '{print $1}')"
     printf 'profile=desktop\nsize=3584\n'
   } | sha256sum | awk '{print $1}'
 }
@@ -301,7 +299,7 @@ probe_existing_adb() {
   bootdev=$(adb_part "$ADB_SERIAL" boot)
   bootsz=$(stat -c %s "$BOOTIMG")
   if [[ -n "$bootdev" ]]; then
-    remote_boot_sha=$(adb -s "$ADB_SERIAL" shell "head -c $bootsz $bootdev 2>/dev/null | sha256sum | awk '{print \\$1}'" 2>/dev/null | tr -d '\r\n' || true)
+    remote_boot_sha=$(adb -s "$ADB_SERIAL" shell "head -c $bootsz $bootdev 2>/dev/null | sha256sum" 2>/dev/null | awk '{print $1}' | tr -d '\r\n' || true)
     if [[ "$remote_boot_sha" == "$DESIRED_BOOT_SHA" ]]; then
       NEED_BOOT=0
       ok "boot уже совпадает по SHA-256"
@@ -310,7 +308,11 @@ probe_existing_adb() {
     fi
   fi
 
-  if (( ! FORCE )) && (( ! NEED_ROOTFS && ! NEED_BOOT )); then
+  if (( FORCE )); then
+    NEED_ROOTFS=1
+    NEED_BOOT=1
+    sub "--force: повторная прошивка включена принудительно"
+  elif (( ! NEED_ROOTFS && ! NEED_BOOT )); then
     ok "На планшете уже установлены те же данные. Повторная прошивка не нужна."
     exit 0
   fi
@@ -375,8 +377,14 @@ EOF
 }
 
 apply_state_skip() {
-  (( FORCE )) && return 0
   load_state
+  if (( HAD_ADB_PROBE )); then
+    (( ! NEED_ROOTFS )) && { STATE_ROOTFS_SHA=$DESIRED_ROOTFS_SHA; STATE_ROOTFS_ID=$ROOTFS_ID; }
+    (( ! NEED_BOOT )) && STATE_BOOT_SHA=$DESIRED_BOOT_SHA
+    save_state
+    return 0
+  fi
+  (( FORCE )) && return 0
   if [[ "$STATE_ROOTFS_SHA" == "$DESIRED_ROOTFS_SHA" && "$STATE_ROOTFS_ID" == "$ROOTFS_ID" ]]; then
     NEED_ROOTFS=0
     ok "userdata совпадает с последней успешной установкой на этом устройстве"
