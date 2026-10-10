@@ -108,6 +108,11 @@ REMBLY_WAIT_SECONDS=180 bash rembly-install.sh
 в этом установщике нет. Recovery без ADB shell/getprop также не поддерживается.
 Для Rembly без getprop нужно войти в Fastboot аппаратно.
 
-Сборке VT-ядра нужен Python 2.7 для MediaTek DrvGen (`python2` либо путь в
-`REMBLY_KERNEL_PYTHON`); Python 3 его не заменяет. Установка зависимостей и сборка
-rootfs могут потребовать пароль sudo. Автоматизация USB эти требования не отменяет.
+Для MediaTek DrvGen установщик использует Python 2.7. Если `python2` отсутствует,
+он автоматически скачивает исходники Python 2.7.18 с python.org, проверяет SHA-256
+и собирает интерпретатор в `~/.cache/rembly-kernel/python-2.7.18`. Системный Python
+не меняется, sudo для этого шага не нужен. Повторный запуск использует кэш.
+Журнал: `~/.cache/rembly-kernel/python2-build.log`. `REMBLY_BUILD_CACHE` меняет
+корень кэша, `REMBLY_KERNEL_PYTHON` позволяет явно указать готовый Python 2.7.
+Для первой сборки нужны сеть, gcc, make, tar с поддержкой xz и Python 3.
+Установка остальных зависимостей и сборка rootfs могут потребовать пароль sudo.

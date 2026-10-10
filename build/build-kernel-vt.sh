@@ -56,13 +56,8 @@ if (( ! REBUILD )) && [[ -s "$OUT_KERNEL" && -f "$STAMP" ]] && [[ "$(cat "$STAMP
 fi
 
 echo "== preparing stock tablet kernel config"
-# MediaTek DCT uses Python 2 syntax; never fall through to /usr/bin/python
-# on hosts where that is Python 3. Allow an explicit interpreter path.
-DCT_PYTHON=${REMBLY_KERNEL_PYTHON:-python2}
-if ! "$DCT_PYTHON" -c 'import sys; sys.exit(sys.version_info[:2] != (2, 7))' 2>/dev/null; then
-  echo "MediaTek DrvGen requires Python 2.7; set REMBLY_KERNEL_PYTHON to its executable" >&2
-  exit 1
-fi
+# Use system Python 2.7 or build a private interpreter in the Rembly cache.
+DCT_PYTHON=$(bash "$ROOT/build/ensure-python2.sh")
 cp "$ROOT/kernel_config.txt" "$K/.config"
 chmod +x "$K/scripts/config" 2>/dev/null || true
 
