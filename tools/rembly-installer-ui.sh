@@ -24,8 +24,6 @@ ui_ascii_logo() {
 
 ui_logo() {
   [[ -t 1 && -f "$LOGO" ]] || { ui_ascii_logo; return; }
-
-  # Render the real repository logo when the current terminal can display images.
   if [[ -n "${WEZTERM_PANE:-}" ]] && command -v wezterm >/dev/null 2>&1; then
     wezterm imgcat --width 20 "$LOGO" 2>/dev/null && return 0
   fi
@@ -35,7 +33,6 @@ ui_logo() {
   if command -v chafa >/dev/null 2>&1; then
     chafa --size 24x10 --align center "$LOGO" 2>/dev/null && return 0
   fi
-
   ui_ascii_logo
 }
 
@@ -46,17 +43,18 @@ ui_rule() {
 banner() {
   ui_logo
   printf '\n%s%*s%s\n' "$W" 43 'REMBLY OS' "$N"
-  printf '%s%*s%s\n' "$C" 53 'A73 AUTOMATIC INSTALLER' "$N"
+  printf '%s%*s%s\n' "$C" 56 'DIRECT SMART FASTBOOT INSTALLER' "$N"
   printf '%s%*s%s\n' "$D" 55 'K37MV1_BSP  •  MT6737M  •  USB' "$N"
   printf '\n'; ui_rule
   printf '%s  ◆  АВТОМАТИЧЕСКАЯ УСТАНОВКА%s\n' "$P" "$N"
-  printf '%s  Система сама найдёт планшет, проверит его, сделает backup и установит Rembly.%s\n' "$D" "$N"
+  printf '%s  Без временной загрузки: сборка, сравнение и прямая прошивка через Fastboot.%s\n' "$D" "$N"
+  printf '%s  Совпадающие userdata/boot повторно не записываются.%s\n' "$D" "$N"
   ui_rule
   printf '\n%s╭─ БЕЗОПАСНАЯ ЗОНА ────────────────────────────────────────────────╮%s\n' "$B" "$N"
-  printf '%s│%s  %sЗаписываются:%s  userdata + boot                                  %s│%s\n' "$B" "$N" "$W" "$N" "$B" "$N"
+  printf '%s│%s  %sМогут записываться:%s userdata + boot                              %s│%s\n' "$B" "$N" "$W" "$N" "$B" "$N"
   printf '%s│%s  %sНе трогаются:%s preloader, lk, gpt, nvram, nvdata, system, vendor   %s│%s\n' "$B" "$N" "$G" "$N" "$B" "$N"
+  printf '%s│%s  %sBoot:%s всегда записывается последним, только если изменился          %s│%s\n' "$B" "$N" "$G" "$N" "$B" "$N"
   printf '%s╰────────────────────────────────────────────────────────────────────╯%s\n' "$B" "$N"
-  printf '%s  Полная установка удалит Android-данные из userdata.%s\n' "$Y" "$N"
 }
 
 step() {
@@ -65,17 +63,9 @@ step() {
   printf '%s│%s\n' "$M" "$N"
 }
 
-ok() {
-  printf '%s│%s  %s●%s %s\n' "$M" "$N" "$G" "$N" "$*"
-}
-
-warn() {
-  printf '%s│%s  %s▲%s %s\n' "$M" "$N" "$Y" "$N" "$*"
-}
-
-sub() {
-  printf '%s│%s    %s↳ %s%s\n' "$M" "$N" "$D" "$*" "$N"
-}
+ok() { printf '%s│%s  %s●%s %s\n' "$M" "$N" "$G" "$N" "$*"; }
+warn() { printf '%s│%s  %s▲%s %s\n' "$M" "$N" "$Y" "$N" "$*"; }
+sub() { printf '%s│%s    %s↳ %s%s\n' "$M" "$N" "$D" "$*" "$N"; }
 
 die() {
   printf '\n%s╭─ ОШИБКА ─────────────────────────────────────────────────────────╮%s\n' "$R" "$N" >&2
@@ -88,6 +78,6 @@ rembly_ui_start() {
   if [[ -t 1 && "${TERM:-}" != dumb && "${REMBLY_NO_CLEAR:-0}" != 1 ]]; then
     command -v clear >/dev/null 2>&1 && clear || true
   fi
-  printf '\033]0;Rembly OS • Automatic Installer\007' 2>/dev/null || true
+  printf '\033]0;Rembly OS • Direct Smart Installer\007' 2>/dev/null || true
   banner
 }
