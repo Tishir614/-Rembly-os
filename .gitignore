@@ -1,8 +1,11 @@
 __pycache__/
 out/rembly-rootfs.*
+out/rembly-kernel-vt.*
+out/rembly-boot.source-id
 out/work/
 out/fastboot-claims-*
 out/rembly-*.commit
 out/last-backup-dir.txt
+out/last-fastboot-*.log
 out/.boot-readback.bin
 backups/
