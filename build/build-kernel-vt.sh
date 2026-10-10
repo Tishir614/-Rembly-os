@@ -46,7 +46,7 @@ K=$(cd "$K" && pwd)
 TC_COMMIT=$(git -C "$TC_DIR" rev-parse HEAD 2>/dev/null || echo unknown)
 CONFIG_SHA=$(sha256sum "$ROOT/kernel_config.txt" | awk '{print $1}')
 INPUT_ID=$(printf '%s\n%s\n%s\n%s\n' "$BSP_COMMIT" "$TC_COMMIT" "$CONFIG_SHA" \
-  'VT CONSOLE_TRANSLATIONS VT_CONSOLE HW_CONSOLE FRAMEBUFFER_CONSOLE drvgen-absolute stackprotector-probe-v1' | sha256sum | awk '{print $1}')
+  'VT CONSOLE_TRANSLATIONS VT_CONSOLE HW_CONSOLE FRAMEBUFFER_CONSOLE drvgen-absolute stackprotector-probe-v1 host-fcommon-v1' | sha256sum | awk '{print $1}')
 OUT_KERNEL="$OUT/rembly-kernel-vt.zImage"
 STAMP="$OUT/rembly-kernel-vt.id"
 
@@ -111,8 +111,12 @@ JOBS=${REMBLY_KERNEL_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)}
 # FORCE rule, which recurses into tools with O=. and produces tools/tools.
 # This is an existing source script, not a tool to rebuild. An absolute
 # prerequisite avoids that pattern rule while preserving drvgen dependencies.
+# Linux 3.18's bundled DTC also defines yylloc in two generated objects. Modern
+# host GCC defaults to -fno-common, turning that old harmless pattern into a link
+# error. Build host tools with -fcommon while leaving the ARM target flags alone.
 make -C "$K" -j"$JOBS" ARCH=arm CROSS_COMPILE="$CROSS_COMPILE" \
   DRVGEN_TOOL="$K/tools/dct/DrvGen.py" python="$DCT_PYTHON" \
+  HOSTCFLAGS="${HOSTCFLAGS:-} -fcommon" \
   KCFLAGS="${KCFLAGS:-} -Wno-error" zImage
 
 [[ -s "$K/arch/arm/boot/zImage" ]] || { echo "kernel build did not produce zImage" >&2; exit 1; }
