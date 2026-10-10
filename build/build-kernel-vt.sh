@@ -39,12 +39,14 @@ fi
 
 K="$BSP_DIR/kernel-3.18"
 [[ -f "$K/Makefile" ]] || { echo "kernel-3.18 source missing" >&2; exit 1; }
+K=$(cd "$K" && pwd)
+[[ -f "$K/tools/dct/DrvGen.py" ]] || { echo "DrvGen.py missing" >&2; exit 1; }
 [[ -f "$ROOT/kernel_config.txt" ]] || { echo "kernel_config.txt missing" >&2; exit 1; }
 
 TC_COMMIT=$(git -C "$TC_DIR" rev-parse HEAD 2>/dev/null || echo unknown)
 CONFIG_SHA=$(sha256sum "$ROOT/kernel_config.txt" | awk '{print $1}')
 INPUT_ID=$(printf '%s\n%s\n%s\n%s\n' "$BSP_COMMIT" "$TC_COMMIT" "$CONFIG_SHA" \
-  'VT CONSOLE_TRANSLATIONS VT_CONSOLE HW_CONSOLE FRAMEBUFFER_CONSOLE' | sha256sum | awk '{print $1}')
+  'VT CONSOLE_TRANSLATIONS VT_CONSOLE HW_CONSOLE FRAMEBUFFER_CONSOLE drvgen-absolute stackprotector-probe-v1' | sha256sum | awk '{print $1}')
 OUT_KERNEL="$OUT/rembly-kernel-vt.zImage"
 STAMP="$OUT/rembly-kernel-vt.id"
 
@@ -54,6 +56,13 @@ if (( ! REBUILD )) && [[ -s "$OUT_KERNEL" && -f "$STAMP" ]] && [[ "$(cat "$STAMP
 fi
 
 echo "== preparing stock tablet kernel config"
+# MediaTek DCT uses Python 2 syntax; never fall through to /usr/bin/python
+# on hosts where that is Python 3. Allow an explicit interpreter path.
+DCT_PYTHON=${REMBLY_KERNEL_PYTHON:-python2}
+if ! "$DCT_PYTHON" -c 'import sys; sys.exit(sys.version_info[:2] != (2, 7))' 2>/dev/null; then
+  echo "MediaTek DrvGen requires Python 2.7; set REMBLY_KERNEL_PYTHON to its executable" >&2
+  exit 1
+fi
 cp "$ROOT/kernel_config.txt" "$K/.config"
 chmod +x "$K/scripts/config" 2>/dev/null || true
 
@@ -74,6 +83,20 @@ done
 export ARCH=arm
 export CROSS_COMPILE="$TC_DIR/bin/arm-eabi-"
 
+# GCC 4.8 rejects -fstack-protector-strong. The BSP warns but still passes
+# that flag to CC, so explicitly select regular protection when necessary.
+if grep -qx 'CONFIG_CC_STACKPROTECTOR_STRONG=y' "$K/.config" &&
+   ! "${CROSS_COMPILE}gcc" -Werror -fstack-protector-strong -x c -c /dev/null -o /dev/null 2>/dev/null; then
+  "${CROSS_COMPILE}gcc" -Werror -fstack-protector -x c -c /dev/null -o /dev/null || {
+    echo "compiler does not support regular stack protection" >&2
+    exit 1
+  }
+  echo "== compiler lacks strong stack protection; selecting CONFIG_CC_STACKPROTECTOR_REGULAR"
+  sed -i -E '/^(# )?CONFIG_CC_STACKPROTECTOR_(STRONG|NONE)(=| is not set)/d' "$K/.config"
+  printf '# CONFIG_CC_STACKPROTECTOR_STRONG is not set\n# CONFIG_CC_STACKPROTECTOR_NONE is not set\n' >> "$K/.config"
+  cfg_on CC_STACKPROTECTOR_REGULAR
+fi
+
 if (( REBUILD )); then
   make -C "$K" ARCH=arm CROSS_COMPILE="$CROSS_COMPILE" clean
 fi
@@ -89,7 +112,13 @@ done
 
 echo "== building K37MV1_BSP zImage with VT console"
 JOBS=${REMBLY_KERNEL_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)}
-make -C "$K" -j"$JOBS" ARCH=arm CROSS_COMPILE="$CROSS_COMPILE" KCFLAGS="${KCFLAGS:-} -Wno-error" zImage
+# A relative tools/dct/DrvGen.py prerequisite matches the BSP's tools/%:
+# FORCE rule, which recurses into tools with O=. and produces tools/tools.
+# This is an existing source script, not a tool to rebuild. An absolute
+# prerequisite avoids that pattern rule while preserving drvgen dependencies.
+make -C "$K" -j"$JOBS" ARCH=arm CROSS_COMPILE="$CROSS_COMPILE" \
+  DRVGEN_TOOL="$K/tools/dct/DrvGen.py" python="$DCT_PYTHON" \
+  KCFLAGS="${KCFLAGS:-} -Wno-error" zImage
 
 [[ -s "$K/arch/arm/boot/zImage" ]] || { echo "kernel build did not produce zImage" >&2; exit 1; }
 cp -f "$K/arch/arm/boot/zImage" "$OUT_KERNEL"
