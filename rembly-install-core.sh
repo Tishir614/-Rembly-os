@@ -14,7 +14,9 @@ SPARSE="$OUT/rembly-rootfs.sparse.img"
 KERNEL_IMG="$OUT/rembly-kernel-vt.zImage"
 EXPECTED_PRODUCT=K37MV1_BSP
 EXPECTED_STOCK_BOOT_SHA=a94d3f8a18d626d0e12c3c1fe0848076a5c7754f2f108f727a9a21249a3483f4
-WAIT_SECONDS=${REMBLY_WAIT_SECONDS:-180}
+WAIT_SECONDS=${REMBLY_WAIT_SECONDS:-0}
+[[ "$WAIT_SECONDS" =~ ^[0-9]+$ ]] || { echo "REMBLY_WAIT_SECONDS must be a nonnegative integer" >&2; exit 2; }
+WAIT_SECONDS=$((10#$WAIT_SECONDS))
 REBUILD=0
 REUSE=0
 FORCE=0
@@ -35,7 +37,9 @@ Rembly OS direct Fastboot installer
 
 Default behaviour:
   * build/check VT-capable boot and current rootfs
-  * detect an A73 in ADB or Fastboot
+  * continuously detect ADB/recovery or Fastboot, including late USB connections
+  * automatically request bootloader mode from an identified A73
+  * wait without questions (REMBLY_WAIT_SECONDS=0 means no deadline)
   * compare installed Rembly build when ADB is available
   * use the local successful-install record when the tablet is already in Fastboot
   * skip userdata or boot when the same data is already installed
@@ -69,7 +73,7 @@ mkdir -p "$OUT"
 
 need_host_tools() {
   local missing=() c
-  for c in adb fastboot python3 sha256sum git make bc perl flex bison; do
+  for c in adb fastboot timeout python3 sha256sum git make bc perl flex bison; do
     command -v "$c" >/dev/null 2>&1 || missing+=("$c")
   done
   if ((${#missing[@]})); then
@@ -85,7 +89,7 @@ need_host_tools() {
       die "Не удалось автоматически установить инструменты сборки."
     fi
   fi
-  for c in adb fastboot python3 sha256sum git make bc perl flex bison; do
+  for c in adb fastboot timeout python3 sha256sum git make bc perl flex bison; do
     command -v "$c" >/dev/null 2>&1 || die "После установки не найден $c"
   done
 }
@@ -247,23 +251,25 @@ ensure_images() {
   ok "Образы проверены"
 }
 
-list_fastboot() { fastboot devices 2>/dev/null | awk 'NF{print $1}'; }
-list_adb() { adb devices 2>/dev/null | awk '$2=="device"{print $1}'; }
+adb_bounded() { command timeout 120s adb "$@"; }
+
+list_fastboot() { timeout 5s fastboot devices 2>/dev/null | awk '$2=="fastboot"{print $1}'; }
+list_adb() { timeout 5s adb devices 2>/dev/null | awk '$2=="device" || $2=="recovery"{print $1}'; }
 
 adb_part() {
   local serial=$1 name=$2
-  adb -s "$serial" shell "for u in /sys/class/block/*/uevent; do grep -qx 'PARTNAME=$name' \"\$u\" 2>/dev/null && { d=\${u%/uevent}; echo /dev/\${d##*/}; break; }; done" 2>/dev/null | tr -d '\r'
+  adb_bounded -s "$serial" shell "for u in /sys/class/block/*/uevent; do grep -qx 'PARTNAME=$name' \"\$u\" 2>/dev/null && { d=\${u%/uevent}; echo /dev/\${d##*/}; break; }; done" 2>/dev/null | tr -d '\r'
 }
 
 make_adb_backup() {
   local serial=$1 bootdev recdev stamp bdir
-  adb -s "$serial" shell id 2>/dev/null | grep -q 'uid=0' || return 0
+  adb_bounded -s "$serial" shell id 2>/dev/null | grep -q 'uid=0' || return 0
   bootdev=$(adb_part "$serial" boot); recdev=$(adb_part "$serial" recovery)
   [[ -n "$bootdev" && -n "$recdev" ]] || return 0
   stamp=$(date +%Y%m%d-%H%M%S); bdir="$ROOT/backups/$stamp"; mkdir -p "$bdir"
   step "Сохраняю текущие boot/recovery перед прямой прошивкой"
-  adb -s "$serial" exec-out "dd if=$bootdev bs=4096 2>/dev/null" > "$bdir/boot-current.bin" || true
-  adb -s "$serial" exec-out "dd if=$recdev bs=4096 2>/dev/null" > "$bdir/recovery-current.bin" || true
+  adb_bounded -s "$serial" exec-out "dd if=$bootdev bs=4096 2>/dev/null" > "$bdir/boot-current.bin" || true
+  adb_bounded -s "$serial" exec-out "dd if=$recdev bs=4096 2>/dev/null" > "$bdir/recovery-current.bin" || true
   cp -f "$ROOT/boot.bin" "$bdir/boot-stock.bin"
   cp -f "$ROOT/recovery.bin" "$bdir/recovery-stock.bin"
   (cd "$bdir" && sha256sum *.bin > SHA256SUMS)
@@ -276,16 +282,24 @@ NEED_BOOT=1
 HAD_ADB_PROBE=0
 
 probe_existing_adb() {
-  adb start-server >/dev/null 2>&1 || true
+  adb_bounded start-server >/dev/null 2>&1 || true
   mapfile -t ads < <(list_adb)
   ((${#ads[@]}==1)) || return 1
+  if (( HAD_ADB_PROBE )); then
+    [[ "${ads[0]}" == "$ADB_SERIAL" ]] || die "ADB-устройство сменилось во время установки."
+    timeout 10s adb -s "$ADB_SERIAL" reboot bootloader >/dev/null 2>&1 || true
+    return 0
+  fi
   ADB_SERIAL=${ads[0]}
+  local product
+  product=$(timeout 5s adb -s "$ADB_SERIAL" shell getprop ro.product.device 2>/dev/null | tr -d '\r\n' || true)
+  [[ "${product,,}" == "${EXPECTED_PRODUCT,,}" ]] || die "ADB: устройство '$product' не подтверждено как $EXPECTED_PRODUCT."
   HAD_ADB_PROBE=1
   step "Сравниваю уже установленную систему"
 
   local remote_id remote_time bootdev remote_boot_sha bootsz
-  remote_id=$(adb -s "$ADB_SERIAL" shell 'cat /etc/rembly/image-id 2>/dev/null' 2>/dev/null | tr -d '\r\n' || true)
-  remote_time=$(adb -s "$ADB_SERIAL" shell 'cat /etc/rembly/buildtime 2>/dev/null' 2>/dev/null | tr -dc '0-9' || true)
+  remote_id=$(adb_bounded -s "$ADB_SERIAL" shell 'cat /etc/rembly/image-id 2>/dev/null' 2>/dev/null | tr -d '\r\n' || true)
+  remote_time=$(adb_bounded -s "$ADB_SERIAL" shell 'cat /etc/rembly/buildtime 2>/dev/null' 2>/dev/null | tr -dc '0-9' || true)
   if [[ -n "$remote_id" && "$remote_id" == "$ROOTFS_ID" ]]; then
     NEED_ROOTFS=0
     ok "userdata уже содержит этот Rembly image-id"
@@ -299,7 +313,7 @@ probe_existing_adb() {
   bootdev=$(adb_part "$ADB_SERIAL" boot)
   bootsz=$(stat -c %s "$BOOTIMG")
   if [[ -n "$bootdev" ]]; then
-    remote_boot_sha=$(adb -s "$ADB_SERIAL" shell "head -c $bootsz $bootdev 2>/dev/null | sha256sum" 2>/dev/null | awk '{print $1}' | tr -d '\r\n' || true)
+    remote_boot_sha=$(adb_bounded -s "$ADB_SERIAL" shell "head -c $bootsz $bootdev 2>/dev/null | sha256sum" 2>/dev/null | awk '{print $1}' | tr -d '\r\n' || true)
     if [[ "$remote_boot_sha" == "$DESIRED_BOOT_SHA" ]]; then
       NEED_BOOT=0
       ok "boot уже совпадает по SHA-256"
@@ -319,22 +333,39 @@ probe_existing_adb() {
 
   make_adb_backup "$ADB_SERIAL"
   sub "Перевожу планшет в Fastboot"
-  adb -s "$ADB_SERIAL" reboot bootloader >/dev/null 2>&1 || true
-  sleep 3
+  timeout 10s adb -s "$ADB_SERIAL" reboot bootloader >/dev/null 2>&1 || warn "ADB не подтвердил перезагрузку; продолжаю ожидание."
   return 0
 }
 
 wait_for_fastboot() {
-  step "Ищу A73 в Fastboot"
-  local start now
-  start=$(date +%s)
+  step "Автоматически подключаю A73 и жду Fastboot"
+  sub "Если планшет выключен, подключи USB и включи его. Ожидание можно прервать Ctrl+C."
+  local start=$SECONDS last_probe=-30 last_status="" status now
+  local -a fbs ads
+  timeout 5s adb start-server >/dev/null 2>&1 || true
   while :; do
     mapfile -t fbs < <(list_fastboot)
-    if ((${#fbs[@]}==1)); then FB_SERIAL=${fbs[0]}; ok "Fastboot: $FB_SERIAL"; return 0; fi
-    ((${#fbs[@]}>1)) && die "Подключено несколько Fastboot-устройств."
-    now=$(date +%s)
-    (( now-start >= WAIT_SECONDS )) && die "A73 не появился в Fastboot за ${WAIT_SECONDS} с."
-    printf '\r  Жду Fastboot A73...   '
+    # Count unauthorized/offline devices too: never pick one of several tablets.
+    mapfile -t ads < <(timeout 5s adb devices 2>/dev/null | awk 'NR>1 && NF>=2{print $1}')
+    ((${#fbs[@]} + ${#ads[@]} > 1)) && die "Подключено несколько ADB/Fastboot-устройств. Оставь только A73."
+    if ((${#fbs[@]}==1)); then
+      FB_SERIAL=${fbs[0]}
+      [[ "$FB_SERIAL" =~ ^[a-zA-Z0-9._:-]+$ && "$FB_SERIAL" != .* ]] || die "Некорректный серийный номер Fastboot."
+      ok "Fastboot: $FB_SERIAL"
+      return 0
+    fi
+    now=$SECONDS
+    if ((${#ads[@]}==1 && now-last_probe >= 30)); then
+      last_probe=$now
+      # Repeat discovery: Android/recovery may appear after the installer starts.
+      probe_existing_adb || true
+    fi
+    status="Жду доступный ADB или Fastboot. Выключенный планшет без USB-интерфейса программно включить нельзя."
+    if ((${#ads[@]}==1)); then
+      status="Жду переход в Fastboot; ADB offline/unauthorized требует загрузки Android или разрешения отладки на планшете."
+    fi
+    if [[ "$status" != "$last_status" ]]; then sub "$status"; last_status=$status; fi
+    (( WAIT_SECONDS > 0 && SECONDS-start >= WAIT_SECONDS )) && die "A73 не появился в Fastboot за ${WAIT_SECONDS} с."
     sleep 2
   done
 }
@@ -447,7 +478,6 @@ finish_install() {
 }
 
 ensure_images
-probe_existing_adb || true
 wait_for_fastboot
 verify_fastboot_device
 apply_state_skip
